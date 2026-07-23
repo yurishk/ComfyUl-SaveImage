@@ -1,22 +1,18 @@
 """SmartSaveImage 节点模块"""
 
-from .folder_manager import SmartFolderManager
-from .image_saver import SmartImageSaver
+from .smart_save import SmartSaveImage
 
-# 导出节点映射
+# 节点 ID 保持为 SmartSaveImage，旧工作流可无缝复用
 NODE_CLASS_MAPPINGS = {
-    "SmartFolderManager": SmartFolderManager,
-    "SmartImageSaver": SmartImageSaver,
+    "SmartSaveImage": SmartSaveImage,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SmartFolderManager": "SmartFolderManager",
-    "SmartImageSaver": "SmartImageSaver",
+    "SmartSaveImage": "智能保存图片",
 }
 
 __all__ = [
-    "SmartFolderManager",
-    "SmartImageSaver", 
+    "SmartSaveImage",
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
 ]

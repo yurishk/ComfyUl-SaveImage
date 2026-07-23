@@ -1,0 +1,270 @@
+.ssi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 6px 8px 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--input-text, #e6e6e6);
+}
+
+.ssi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ssi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ssi-label {
+  font-weight: 600;
+  color: var(--descrip-text, #b8c0cc);
+  min-width: 60px;
+}
+
+.ssi-input,
+.ssi-select {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  box-sizing: border-box;
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #e6e6e6);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.ssi-input:focus,
+.ssi-select:focus {
+  border-color: #5b9dff;
+}
+
+.ssi-mono {
+  font-family: "Consolas", "Menlo", monospace;
+  letter-spacing: 0.2px;
+}
+
+/* 根目录分段按钮 */
+.ssi-location {
+  align-items: stretch;
+}
+
+.ssi-seg {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  width: 100%;
+}
+
+.ssi-seg-btn {
+  min-width: 0;
+  height: 30px;
+  padding: 4px 3px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  background: var(--comfy-input-bg, #222);
+  color: var(--descrip-text, #b8c0cc);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssi-seg-btn:hover {
+  border-color: #5b9dff;
+}
+
+.ssi-seg-active {
+  background: #3a6df0;
+  color: #fff;
+  border-color: #3a6df0;
+}
+
+/* 占位符调色板 */
+.ssi-palette {
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+}
+
+.ssi-palette-summary {
+  cursor: pointer;
+  color: var(--descrip-text, #b8c0cc);
+  font-weight: 600;
+  user-select: none;
+}
+
+.ssi-palette[open] .ssi-palette-summary {
+  margin-bottom: 7px;
+}
+
+.ssi-palette .ssi-hint,
+.ssi-palette .ssi-token-group {
+  margin-top: 6px;
+}
+
+.ssi-hint {
+  color: var(--descrip-text, #8a93a2);
+  font-size: 11px;
+}
+
+.ssi-token-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ssi-group-name {
+  color: #8a93a2;
+  font-size: 11px;
+  margin-right: 4px;
+  min-width: 28px;
+}
+
+.ssi-chip {
+  padding: 3px 7px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  background: var(--comfy-input-bg, #2a2a2a);
+  color: #cdd6e0;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.12s ease;
+}
+
+.ssi-chip:hover {
+  background: #3a6df0;
+  color: #fff;
+  border-color: #3a6df0;
+}
+
+/* 选项网格 */
+.ssi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  align-items: end;
+}
+
+.ssi-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ssi-cell-label {
+  font-size: 11px;
+  color: var(--descrip-text, #8a93a2);
+}
+
+.ssi-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  min-height: 30px;
+}
+
+/* 预览区 */
+.ssi-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border-color, #444);
+}
+
+.ssi-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ssi-preview-title {
+  font-weight: 600;
+  color: var(--input-text, #e6e6e6);
+}
+
+.ssi-refresh {
+  padding: 3px 8px;
+  border: 1px solid var(--border-color, #555);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--descrip-text, #b8c0cc);
+  cursor: pointer;
+}
+
+.ssi-refresh:hover {
+  background: #3a6df0;
+  color: #fff;
+}
+
+.ssi-path {
+  font-family: "Consolas", "Menlo", monospace;
+  overflow-wrap: anywhere;
+  color: var(--input-text, #e6e6e6);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 5px 7px;
+  border-radius: 4px;
+  max-height: 38px;
+  overflow: auto;
+  font-size: 11px;
+}
+
+.ssi-file {
+  color: #cdd6e0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.ssi-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ssi-context:empty,
+.ssi-file:empty {
+  display: none;
+}
+
+.ssi-ctx-tag {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #dfe6ee;
+}
+
+.ssi-ctx-tag b {
+  color: #9fc3ff;
+  font-weight: 600;
+}
+
+.ssi-status {
+  font-size: 11px;
+  color: #8a93a2;
+}
+
+.ssi-status-ok {
+  color: #6bd08a;
+}
+
+.ssi-status-warn {
+  color: #f0a35b;
+}

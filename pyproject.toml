@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SmartSaveImage"
-version = "0.0.1"
-description = "A node for easy save"
+version = "2.0.0"
+description = "A visual, template-driven image saver for ComfyUI"
 authors = [
   {name = "kj", email = "2990346238@qq.com"}
 ]
