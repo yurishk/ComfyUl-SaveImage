@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { buildReadOnlyPrompt } from "./read_only_prompt.mjs";
 
 const NODE_NAME = "SmartSaveImage";
 const CSS_HREF = "extensions/SmartSaveImage/smart_save.css";
@@ -289,9 +290,8 @@ function buildPanel(node) {
     statusLine.textContent = "正在计算…";
     statusLine.className = "ssi-status";
     try {
-      const graph = await app.graphToPrompt();
       const payload = {
-        prompt: graph?.output || {},
+        prompt: buildReadOnlyPrompt(app.graph, node),
         root_mode: widgetValue(node, "root_mode", "output"),
         custom_root: widgetValue(node, "custom_root", ""),
         folder_template: widgetValue(node, "folder_template", ""),
