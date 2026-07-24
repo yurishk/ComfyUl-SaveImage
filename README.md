@@ -11,6 +11,9 @@
 
 模板变量默认折叠，展开后点击变量即可插入当前规则输入框。
 
+## 节点预览
+![智能保存图片](https://sywb.top/Staticfiles/pic/SmartSaveImage.png)
+
 ## 模板变量
 
 - 时间：`%date:yyyy-MM-dd%`、`%year%`、`%month%`、`%day%`、`%hour%`、`%minute%`、`%second%`
