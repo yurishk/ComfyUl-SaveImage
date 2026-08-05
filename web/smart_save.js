@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 import { buildReadOnlyPrompt } from "./read_only_prompt.mjs";
 
 const NODE_NAME = "SmartSaveImage";
-const CSS_HREF = "extensions/SmartSaveImage/smart_save.css";
+const CSS_HREF = new URL("./smart_save.css", import.meta.url).href;
 
 // 需要隐藏并由自定义面板托管的原生 widget
 const MANAGED_WIDGETS = [
@@ -22,28 +22,36 @@ const MANAGED_WIDGETS = [
 ];
 
 // 占位符说明（分组展示，点击插入到当前聚焦的模板输入框）
-const TOKENS = [
-  { group: "时间", items: [
-    { t: "%date:yyyy-MM-dd%", d: "日期(可自定义格式)" },
-    { t: "%year%", d: "年" }, { t: "%month%", d: "月" }, { t: "%day%", d: "日" },
-    { t: "%hour%", d: "时" }, { t: "%minute%", d: "分" }, { t: "%second%", d: "秒" },
+function createTranslator() {
+  const locale = String(app.ui?.settings?.getSettingValue?.("Comfy.Locale") || navigator.language || "en").toLowerCase();
+  const chinese = locale.startsWith("zh");
+  return (zh, en) => chinese ? zh : en;
+}
+
+function tokenGroups(tr) {
+  return [
+  { group: tr("时间", "Time"), items: [
+    { t: "%date:yyyy-MM-dd%", d: tr("日期（可自定义格式）", "Date with a custom format") },
+    { t: "%year%", d: tr("年", "Year") }, { t: "%month%", d: tr("月", "Month") }, { t: "%day%", d: tr("日", "Day") },
+    { t: "%hour%", d: tr("时", "Hour") }, { t: "%minute%", d: tr("分", "Minute") }, { t: "%second%", d: tr("秒", "Second") },
   ]},
-  { group: "模型", items: [
-    { t: "%model%", d: "模型名(去扩展名)" },
-    { t: "%model_full%", d: "模型完整名" },
-    { t: "%unet%", d: "UNet/扩散模型" },
-    { t: "%lora%", d: "首个 LoRA" },
+  { group: tr("模型", "Model"), items: [
+    { t: "%model%", d: tr("模型名（无扩展名）", "Model name without extension") },
+    { t: "%model_full%", d: tr("模型完整名", "Full model name") },
+    { t: "%unet%", d: tr("UNet/扩散模型", "UNet or diffusion model") },
+    { t: "%lora%", d: tr("首个 LoRA", "First LoRA") },
     { t: "%vae%", d: "VAE" },
   ]},
-  { group: "采样", items: [
-    { t: "%seed%", d: "种子" }, { t: "%steps%", d: "步数" }, { t: "%cfg%", d: "CFG" },
-    { t: "%sampler%", d: "采样器" }, { t: "%scheduler%", d: "调度器" },
+  { group: tr("采样", "Sampling"), items: [
+    { t: "%seed%", d: tr("种子", "Seed") }, { t: "%steps%", d: tr("步数", "Steps") }, { t: "%cfg%", d: "CFG" },
+    { t: "%sampler%", d: tr("采样器", "Sampler") }, { t: "%scheduler%", d: tr("调度器", "Scheduler") },
   ]},
-  { group: "图片", items: [
-    { t: "%width%", d: "宽" }, { t: "%height%", d: "高" },
-    { t: "%prompt%", d: "正向提示词" }, { t: "%batch%", d: "批次序号(仅文件名)" },
+  { group: tr("图片", "Image"), items: [
+    { t: "%width%", d: tr("宽", "Width") }, { t: "%height%", d: tr("高", "Height") },
+    { t: "%prompt%", d: tr("正向提示词", "Positive prompt") }, { t: "%batch%", d: tr("批次序号（仅文件名）", "Batch index, filenames only") },
   ]},
-];
+  ];
+}
 
 function ensureStyles() {
   const id = "smart-save-image-css";
@@ -88,6 +96,8 @@ function hideWidget(node, name) {
 }
 
 function buildPanel(node) {
+  const tr = createTranslator();
+  const tokens = tokenGroups(tr);
   let debounceTimer = null;
   let previewRequest = 0;
 
@@ -101,13 +111,13 @@ function buildPanel(node) {
 
   // ---- 根目录 ----
   const rootRow = el("div", "ssi-field ssi-location");
-  rootRow.append(el("label", "ssi-label", "保存位置"));
+  rootRow.append(el("label", "ssi-label", tr("保存位置", "Save Location")));
   const rootSeg = el("div", "ssi-seg");
   const ROOTS = [
-    { v: "output", label: "输出目录" },
-    { v: "custom", label: "自定义" },
-    { v: "input", label: "输入" },
-    { v: "temp", label: "临时" },
+    { v: "output", label: tr("输出目录", "Output") },
+    { v: "custom", label: tr("自定义", "Custom") },
+    { v: "input", label: tr("输入", "Input") },
+    { v: "temp", label: tr("临时", "Temp") },
   ];
   const rootButtons = {};
   for (const r of ROOTS) {
@@ -120,17 +130,17 @@ function buildPanel(node) {
   rootRow.append(rootSeg);
 
   const customRoot = el("input", "ssi-input");
-  customRoot.placeholder = "例如 D:\\AI\\output（留空使用输出目录）";
+  customRoot.placeholder = tr("例如 D:\\AI\\output（留空使用输出目录）", "For example D:\\AI\\output (blank uses Output)");
   customRoot.value = widgetValue(node, "custom_root", "");
   customRoot.oninput = () => { setWidget(node, "custom_root", customRoot.value); schedulePreview(); };
   const customRootWrap = el("div", "ssi-field ssi-custom-root");
-  customRootWrap.append(el("label", "ssi-cell-label", "自定义路径"), customRoot);
+  customRootWrap.append(el("label", "ssi-cell-label", tr("自定义路径", "Custom Path")), customRoot);
 
   // ---- 目录模板 ----
   const folderRow = el("div", "ssi-field");
-  folderRow.append(el("label", "ssi-label", "子目录规则"));
+  folderRow.append(el("label", "ssi-label", tr("子目录规则", "Subfolder Rule")));
   const folderInput = el("input", "ssi-input ssi-mono");
-  folderInput.placeholder = "例如 %date:yyyy-MM-dd%/%model%";
+  folderInput.placeholder = tr("例如 %date:yyyy-MM-dd%/%model%", "For example %date:yyyy-MM-dd%/%model%");
   folderInput.value = widgetValue(node, "folder_template", "");
   folderInput.oninput = () => { setWidget(node, "folder_template", folderInput.value); schedulePreview(); };
   folderInput.onfocus = () => { activeField = folderInput; };
@@ -138,9 +148,9 @@ function buildPanel(node) {
 
   // ---- 文件名模板 ----
   const nameRow = el("div", "ssi-field");
-  nameRow.append(el("label", "ssi-label", "文件名规则"));
+  nameRow.append(el("label", "ssi-label", tr("文件名规则", "Filename Rule")));
   const nameInput = el("input", "ssi-input ssi-mono");
-  nameInput.placeholder = "例如 %model%_%seed%";
+  nameInput.placeholder = tr("例如 %model%_%seed%", "For example %model%_%seed%");
   nameInput.value = widgetValue(node, "filename_template", "");
   nameInput.oninput = () => { setWidget(node, "filename_template", nameInput.value); schedulePreview(); };
   nameInput.onfocus = () => { activeField = nameInput; };
@@ -150,9 +160,9 @@ function buildPanel(node) {
 
   // ---- 占位符调色板 ----
   const palette = el("details", "ssi-palette");
-  palette.append(el("summary", "ssi-palette-summary", "模板变量"));
-  palette.append(el("div", "ssi-hint", "先选中目录或文件名输入框，再点击变量插入。"));
-  for (const grp of TOKENS) {
+  palette.append(el("summary", "ssi-palette-summary", tr("模板变量", "Template Tokens")));
+  palette.append(el("div", "ssi-hint", tr("先选中目录或文件名输入框，再点击变量插入。", "Focus a folder or filename field, then click a token to insert it.")));
+  for (const grp of tokens) {
     const gwrap = el("div", "ssi-token-group");
     gwrap.append(el("span", "ssi-group-name", grp.group));
     for (const it of grp.items) {
@@ -178,10 +188,10 @@ function buildPanel(node) {
 
   // ---- 模型来源 ----
   const modelRow = el("div", "ssi-row");
-  modelRow.append(el("label", "ssi-label", "模型来源"));
+  modelRow.append(el("label", "ssi-label", tr("模型来源", "Model Source")));
   const modelSelect = el("select", "ssi-select");
   for (const opt of modelOptions) {
-    const o = el("option", null, opt === "auto" ? "自动读取工作流" : opt);
+    const o = el("option", null, opt === "auto" ? tr("自动读取工作流", "Detect from Workflow") : opt);
     o.value = opt;
     modelSelect.append(o);
   }
@@ -194,52 +204,52 @@ function buildPanel(node) {
 
   const fmtSelect = makeSelect(["png", "jpeg", "webp"], widgetValue(node, "file_format", "png"),
     (v) => { setWidget(node, "file_format", v); syncFormat(); schedulePreview(); });
-  optGrid.append(labeled("格式", fmtSelect));
+  optGrid.append(labeled(tr("格式", "Format"), fmtSelect));
 
   const compressionInput = el("input", "ssi-input");
   compressionInput.type = "number";
   compressionInput.min = "0"; compressionInput.max = "9";
   compressionInput.value = widgetValue(node, "png_compression", 4);
-  compressionInput.title = "0 最快且文件最大，9 最慢；所有等级均为无损";
+  compressionInput.title = tr("0 最快且文件最大，9 最慢；所有等级均为无损", "0 is fastest and largest; 9 is slowest. Every level is lossless.");
   compressionInput.oninput = () => {
     const value = Math.max(0, Math.min(parseInt(compressionInput.value || "0", 10), 9));
     setWidget(node, "png_compression", value);
   };
-  const compressionWrap = labeled("PNG 压缩", compressionInput);
+  const compressionWrap = labeled(tr("PNG 压缩", "PNG Compression"), compressionInput);
   optGrid.append(compressionWrap);
 
   const collisionSelect = makeSelect(
-    [["increment", "自动编号"], ["overwrite", "覆盖"]],
+    [["increment", tr("自动编号", "Auto Number")], ["overwrite", tr("覆盖", "Overwrite")]],
     widgetValue(node, "collision_mode", "increment"),
     (v) => { setWidget(node, "collision_mode", v); schedulePreview(); });
-  optGrid.append(labeled("同名冲突", collisionSelect));
+  optGrid.append(labeled(tr("同名冲突", "Name Collision"), collisionSelect));
 
   const modeSelect = makeSelect(
-    [["save_and_preview", "保存并预览"], ["save_only", "仅保存"], ["preview_only", "仅预览"]],
+    [["save_and_preview", tr("保存并预览", "Save and Preview")], ["save_only", tr("仅保存", "Save Only")], ["preview_only", tr("仅预览", "Preview Only")]],
     widgetValue(node, "save_mode", "save_and_preview"),
     (v) => setWidget(node, "save_mode", v));
-  optGrid.append(labeled("保存模式", modeSelect));
+  optGrid.append(labeled(tr("保存模式", "Save Mode"), modeSelect));
 
   const digitsInput = el("input", "ssi-input");
   digitsInput.type = "number";
   digitsInput.min = "0"; digitsInput.max = "8";
   digitsInput.value = widgetValue(node, "counter_digits", 3);
   digitsInput.oninput = () => { setWidget(node, "counter_digits", parseInt(digitsInput.value || "0", 10)); schedulePreview(); };
-  optGrid.append(labeled("序号位数", digitsInput));
+  optGrid.append(labeled(tr("序号位数", "Counter Digits"), digitsInput));
 
   const embedLabel = el("label", "ssi-check");
   const embedBox = el("input");
   embedBox.type = "checkbox";
   embedBox.checked = widgetValue(node, "embed_workflow", true) !== false;
   embedBox.onchange = () => setWidget(node, "embed_workflow", embedBox.checked);
-  embedLabel.append(embedBox, document.createTextNode(" 嵌入工作流"));
+  embedLabel.append(embedBox, document.createTextNode(tr(" 嵌入工作流", " Embed Workflow")));
   optGrid.append(embedLabel);
 
   // ---- 预览区 ----
   const previewBox = el("div", "ssi-preview");
   const previewHead = el("div", "ssi-preview-head");
-  const previewTitle = el("span", "ssi-preview-title", "保存结果预览");
-  const refreshBtn = el("button", "ssi-refresh", "刷新");
+  const previewTitle = el("span", "ssi-preview-title", tr("保存结果预览", "Save Result Preview"));
+  const refreshBtn = el("button", "ssi-refresh", tr("刷新", "Refresh"));
   refreshBtn.type = "button";
   refreshBtn.onclick = () => runPreview();
   previewHead.append(previewTitle, refreshBtn);
@@ -269,7 +279,7 @@ function buildPanel(node) {
     nameInput.value = widgetValue(node, "filename_template", "");
     const modelValue = widgetValue(node, "manual_model", "auto");
     if (![...modelSelect.options].some((option) => option.value === modelValue)) {
-      const missingModel = el("option", null, `${modelValue}（当前不可用）`);
+      const missingModel = el("option", null, `${modelValue}${tr("（当前不可用）", " (currently unavailable)")}`);
       missingModel.value = modelValue;
       modelSelect.append(missingModel);
     }
@@ -287,7 +297,7 @@ function buildPanel(node) {
   // ---- 调用后端计算预览 ----
   async function runPreview() {
     const requestId = ++previewRequest;
-    statusLine.textContent = "正在计算…";
+    statusLine.textContent = tr("正在计算…", "Calculating...");
     statusLine.className = "ssi-status";
     try {
       const payload = {
@@ -311,36 +321,36 @@ function buildPanel(node) {
       const data = await resp.json();
       if (requestId !== previewRequest) return;
       if (!data.ok) {
-        statusLine.textContent = "预览失败：" + (data.error || "未知错误");
+        statusLine.textContent = tr("预览失败：", "Preview failed: ") + (data.error || tr("未知错误", "Unknown error"));
         statusLine.className = "ssi-status ssi-status-warn";
         return;
       }
       pathLine.textContent = data.target;
       pathLine.title = data.target;
-      const examples = (data.example_filenames || []).join("  、  ");
-      fileLine.textContent = "示例文件：" + examples;
+      const examples = (data.example_filenames || []).join(tr("  、  ", ", "));
+      fileLine.textContent = tr("示例文件：", "Example file: ") + examples;
       const c = data.context || {};
       ctxLine.innerHTML = "";
       const chips = [
-        ["模型", c.model], ["LoRA", c.lora], ["种子", c.seed],
-        ["采样器", c.sampler], ["尺寸", c.width && c.height ? `${c.width}x${c.height}` : ""],
+        [tr("模型", "Model"), c.model], ["LoRA", c.lora], [tr("种子", "Seed"), c.seed],
+        [tr("采样器", "Sampler"), c.sampler], [tr("尺寸", "Size"), c.width && c.height ? `${c.width}x${c.height}` : ""],
       ];
       for (const [k, v] of chips) {
         if (!v) continue;
         const tag = el("span", "ssi-ctx-tag");
-        tag.append(el("b", null, k + "："), document.createTextNode(v));
+        tag.append(el("b", null, k + tr("：", ": ")), document.createTextNode(v));
         ctxLine.append(tag);
       }
       if (data.exists) {
-        statusLine.textContent = `目录已存在，已有 ${data.existing_count} 张图片`;
+        statusLine.textContent = tr(`目录已存在，已有 ${data.existing_count} 张图片`, `Folder exists with ${data.existing_count} image(s)`);
         statusLine.className = "ssi-status ssi-status-ok";
       } else {
-        statusLine.textContent = "目录尚不存在，保存时将自动创建";
+        statusLine.textContent = tr("目录尚不存在，保存时将自动创建", "Folder does not exist yet and will be created when saving");
         statusLine.className = "ssi-status";
       }
     } catch (err) {
       if (requestId !== previewRequest) return;
-      statusLine.textContent = "预览异常：" + err;
+      statusLine.textContent = tr("预览异常：", "Preview error: ") + err;
       statusLine.className = "ssi-status ssi-status-warn";
     }
   }

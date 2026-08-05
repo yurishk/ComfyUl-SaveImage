@@ -1,0 +1,9 @@
+.github/
+.pytest_cache/
+.vscode/
+test/
+tests/
+__pycache__/
+*.pyc
+.pre-commit-config.yaml
+CONTRIBUTING.md

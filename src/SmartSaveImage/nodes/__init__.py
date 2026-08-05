@@ -8,7 +8,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SmartSaveImage": "智能保存图片",
+    "SmartSaveImage": "Smart Save Image",
 }
 
 __all__ = [

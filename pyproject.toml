@@ -3,18 +3,21 @@ requires = ["setuptools>=70.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SmartSaveImage"
+name = "smart-save-image"
 version = "2.0.0"
-description = "A visual, template-driven image saver for ComfyUI"
+description = "A visual, template-driven ComfyUI image saver with live path previews"
 authors = [
-  {name = "kj", email = "2990346238@qq.com"}
+  {name = "yurishk"}
 ]
 readme = "README.md"
-license = {text = "MIT license"}
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
-classifiers = []
+classifiers = [
+  "Operating System :: OS Independent",
+]
 dependencies = [
-
+  "numpy>=1.19.0",
+  "Pillow>=8.0.0",
 ]
 
 
@@ -30,19 +33,13 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/kjqwer/SmartSaveImage"
-BugTracker = "https://github.com/kjqwer/SmartSaveImage/issues"
-Documentation = "https://github.com/kjqwer/SmartSaveImage/wiki"
+Repository = "https://github.com/yurishk/ComfyUl-SaveImage"
+"Bug Tracker" = "https://github.com/yurishk/ComfyUl-SaveImage/issues"
 
 
 [tool.comfy]
-PublisherId = "kjqwer"
-DisplayName = "SmartSaveImage"
-Icon = ""
-Tags = []
-Repository = "https://github.com/kjqwer/SmartSaveImage"
-
-includes = []
+PublisherId = "yurishk"
+DisplayName = "Smart Save Image"
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]
