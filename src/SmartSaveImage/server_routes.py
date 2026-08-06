@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import os
 
+import folder_paths
+import nodes as comfy_nodes
+
 from .nodes.smart_save import (
     SmartSaveImage,
     build_filename_base,
@@ -33,6 +36,33 @@ def _count_images(folder: str) -> int:
         return 0
 
 
+def get_variable_options() -> dict[str, list[str]]:
+    def filenames(category: str) -> list[str]:
+        try:
+            return list(folder_paths.get_filename_list(category))
+        except Exception:
+            return []
+
+    try:
+        import comfy.samplers
+        samplers = list(comfy.samplers.KSampler.SAMPLERS)
+        schedulers = list(comfy.samplers.KSampler.SCHEDULERS)
+    except Exception:
+        samplers = []
+        schedulers = []
+    try:
+        vaes = list(comfy_nodes.VAELoader.vae_list(None))
+    except Exception:
+        vaes = filenames("vae")
+    return {
+        "unet": filenames("diffusion_models"),
+        "lora": filenames("loras"),
+        "vae": vaes,
+        "sampler": samplers,
+        "scheduler": schedulers,
+    }
+
+
 def compute_preview(data: dict) -> dict:
     prompt = data.get("prompt") or {}
     root_mode = data.get("root_mode", "output")
@@ -42,6 +72,11 @@ def compute_preview(data: dict) -> dict:
     file_format = data.get("file_format", "png")
     manual_model = data.get("manual_model", "auto")
     variable_overrides = data.get("variable_overrides", "")
+    external_values = data.get("external_values") if isinstance(data.get("external_values"), dict) else {}
+    connected_inputs = {
+        str(name) for name in data.get("connected_inputs", [])
+        if isinstance(name, str)
+    }
     counter_digits = min(max(int(data.get("counter_digits", 3) or 0), 0), 8)
     batch_size = min(max(int(data.get("batch_size", 1) or 1), 1), 1000)
     collision_mode = data.get("collision_mode", SmartSaveImage.COLLISION_INCREMENT)
@@ -50,6 +85,10 @@ def compute_preview(data: dict) -> dict:
         prompt,
         manual_model=manual_model,
         variable_overrides=variable_overrides,
+        unique_id=data.get("unique_id"),
+        external_values=external_values,
+        connected_inputs=connected_inputs,
+        preview_mode=True,
     )
 
     root = resolve_root(root_mode, custom_root)
@@ -95,6 +134,7 @@ def compute_preview(data: dict) -> dict:
             "negative": (ctx.get("negative") or "")[:120],
             "custom": ctx.get("custom", {}),
             "overridden": ctx.get("overridden", []),
+            "override_sources": ctx.get("override_sources", {}),
         },
     }
 
@@ -125,5 +165,9 @@ def register_routes() -> None:
         except Exception as exc:  # 预览失败不影响使用
             result = {"ok": False, "error": str(exc)}
         return web.json_response(result)
+
+    @instance.routes.get("/smartsave/options")
+    async def smartsave_options(request):  # noqa: ANN001
+        return web.json_response(get_variable_options())
 
     instance._smartsave_routes_registered = True

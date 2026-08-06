@@ -38,6 +38,8 @@ Smart Save automatically detects model, LoRA, VAE, sampling, prompt, and image v
 
 Each Smart Save node stores its own unlimited list. A blank known value keeps the automatic value, and deleting an override restores automatic detection.
 
+Supported rows also create an input socket beside that row. Runtime inputs take priority over the saved manual value; disconnecting restores the manual value or automatic detection. Seed, steps, CFG, dimensions, prompts, UNet, LoRA, VAE, and custom strings accept external inputs. UNet, LoRA, and VAE manual values use the same installed-file choices as ComfyUI loaders. Sampler and scheduler remain compact KSampler-style selectors and do not create sockets. Model Source has its own external model/name socket.
+
 ## Template Tokens
 
 - Time: `%date:yyyy-MM-dd%`, `%year%`, `%month%`, `%day%`, `%hour%`, `%minute%`, `%second%`
@@ -86,6 +88,8 @@ Install `smart-save-image` from ComfyUI Manager, or clone this repository into `
 3. 每个智能保存节点都有自己独立且不限数量的配置；删除一项后，该变量立即恢复自动读取。
 
 模板新增 `%loras%`（全部 LoRA）和 `%negative%`（负向提示词），自定义变量使用 `%变量名%`。
+
+支持外部值的变量会在对应行左侧生成输入端口。运行时输入优先于保存的手动值；断开后自动恢复手动值或工作流自动读取。Seed、步数、CFG、尺寸、提示词、UNet、LoRA、VAE 和自定义字符串均可连接外部节点。UNet、LoRA、VAE 的手动值使用与 ComfyUI 加载器相同的文件列表；采样器和调度器保持 KSampler 风格的下拉选择，不生成外部端口。“模型来源”有自己独立的模型对象/名称输入端口。
 
 ### 保存行为
 

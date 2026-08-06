@@ -18,6 +18,7 @@ from src.SmartSaveImage.nodes.smart_save import (
     extract_context,
     parse_variable_config,
     resolve_template_context,
+    variable_input_name,
 )
 from src.SmartSaveImage.server_routes import compute_preview
 
@@ -131,9 +132,9 @@ def test_loras_override_keeps_first_lora_token_consistent():
         {"items": [{"key": "loras", "value": "face.safetensors, detail.safetensors"}]},
     )
 
-    assert ctx["lora"] == "face.safetensors"
-    assert ctx["loras"] == ["face.safetensors", "detail.safetensors"]
-    assert expand_template("%lora%+%loras%", ctx) == "face.safetensors+face.safetensors+detail.safetensors"
+    assert ctx["lora"] == "face"
+    assert ctx["loras"] == ["face", "detail"]
+    assert expand_template("%lora%+%loras%", ctx) == "face+face+detail"
 
 
 def test_variable_configuration_is_per_call_and_does_not_mutate_auto_context():
@@ -160,6 +161,149 @@ def test_blank_known_override_keeps_the_automatically_detected_value():
 
     assert result["seed"] == "42"
     assert result["overridden"] == []
+
+
+def test_dynamic_input_value_has_priority_over_manual_and_automatic_values():
+    automatic = extract_context({"1": {"class_type": "KSampler", "inputs": {"seed": 42}}})
+    config = {"items": [{"id": "seed-row", "key": "seed", "value": "100"}]}
+
+    result = apply_variable_overrides(
+        automatic,
+        config,
+        external_values={variable_input_name("seed-row"): 987654},
+    )
+
+    assert parse_variable_config(config)[0]["id"] == "seed-row"
+    assert result["seed"] == "987654"
+    assert result["override_sources"] == {"seed": "input"}
+
+
+def test_linked_model_object_resolves_the_connected_loader_name():
+    prompt = {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "models/external-model.safetensors"},
+        },
+        "9": {
+            "class_type": "SmartSaveImage",
+            "inputs": {"model_input": ["1", 0]},
+        },
+    }
+
+    result = resolve_template_context(
+        prompt,
+        manual_model="manual-model.safetensors",
+        unique_id="9",
+        model_input=object(),
+    )
+
+    assert result["model"] == "external-model"
+    assert result["model_full"] == "models/external-model.safetensors"
+
+
+def test_backend_accepts_frontend_defined_optional_variable_inputs():
+    optional = SmartSaveImage.INPUT_TYPES()["optional"]
+
+    assert optional["variable_any-stable-id"][0] == "*"
+    assert optional["variable_any-stable-id"][1]["forceInput"] is True
+    assert optional["model_input"][0] == "*"
+
+
+@pytest.mark.parametrize("key,class_type,source_inputs,expected", [
+    ("unet", "UNETLoader", {"unet_name": "flux/flux-dev.safetensors"}, "flux-dev"),
+    ("lora", "LoraLoaderModelOnly", {"lora_name": "styles/detail.safetensors"}, "detail"),
+    ("vae", "VAELoader", {"vae_name": "sdxl/vae-ft.safetensors"}, "vae-ft"),
+])
+def test_linked_model_family_inputs_resolve_their_loader_names(key, class_type, source_inputs, expected):
+    input_name = variable_input_name("row")
+    prompt = {
+        "1": {"class_type": class_type, "inputs": source_inputs},
+        "9": {"class_type": "SmartSaveImage", "inputs": {input_name: ["1", 0]}},
+    }
+    config = {"items": [{"id": "row", "key": key, "value": "manual.safetensors"}]}
+
+    result = resolve_template_context(
+        prompt,
+        variable_overrides=config,
+        external_values={input_name: object()},
+        unique_id="9",
+    )
+
+    assert result[key] == expected
+    assert result["override_sources"][key] == "input"
+
+
+def test_preview_uses_the_current_connected_seed_value_instead_of_manual_value(tmp_path):
+    input_name = variable_input_name("seed-row")
+    config = json.dumps({"items": [{"id": "seed-row", "key": "seed", "value": "100"}]})
+    data = {
+        "root_mode": "custom",
+        "custom_root": str(tmp_path),
+        "folder_template": "",
+        "filename_template": "image_%seed%",
+        "file_format": "png",
+        "variable_overrides": config,
+        "external_values": {input_name: 1234},
+        "connected_inputs": [input_name],
+        "unique_id": "9",
+        "prompt": {
+            "1": {"class_type": "SeedSource", "inputs": {"seed": 456}},
+            "9": {"class_type": "SmartSaveImage", "inputs": {input_name: ["1", 0]}},
+        },
+    }
+    preview = compute_preview(data)
+
+    assert preview["example_filenames"] == ["image_1234.png"]
+    assert preview["context"]["override_sources"] == {"seed": "input"}
+
+    data["external_values"][input_name] = 5678
+    refreshed = compute_preview(data)
+    assert refreshed["example_filenames"] == ["image_5678.png"]
+
+
+def test_external_seed_changes_the_saved_filename_at_runtime(tmp_path):
+    input_name = variable_input_name("seed-row")
+    config = json.dumps({"items": [{"id": "seed-row", "key": "seed", "value": "100"}]})
+    common = {
+        "images": torch.zeros((1, 8, 8, 3)),
+        "root_mode": "custom",
+        "custom_root": str(tmp_path),
+        "folder_template": "",
+        "filename_template": "image_%seed%",
+        "file_format": "png",
+        "quality": 95,
+        "collision_mode": SmartSaveImage.COLLISION_OVERWRITE,
+        "save_mode": SmartSaveImage.MODE_SAVE_ONLY,
+        "variable_overrides": config,
+        "embed_workflow": False,
+    }
+
+    SmartSaveImage().save_images(**common, **{input_name: 111})
+    SmartSaveImage().save_images(**common, **{input_name: 222})
+
+    assert sorted(path.name for path in tmp_path.glob("*.png")) == ["image_111.png", "image_222.png"]
+
+
+def test_preview_does_not_show_manual_value_for_an_unknown_connected_runtime_value(tmp_path):
+    input_name = variable_input_name("seed-row")
+    preview = compute_preview({
+        "root_mode": "custom",
+        "custom_root": str(tmp_path),
+        "filename_template": "image_%seed%",
+        "variable_overrides": json.dumps({
+            "items": [{"id": "seed-row", "key": "seed", "value": "111"}],
+        }),
+        "unique_id": "9",
+        "connected_inputs": [input_name],
+        "prompt": {
+            "1": {"class_type": "RuntimeMath", "inputs": {}},
+            "9": {"class_type": "SmartSaveImage", "inputs": {input_name: ["1", 0]}},
+        },
+    })
+
+    assert preview["example_filenames"] == ["image_runtime.png"]
+    assert preview["context"]["seed"] == "runtime"
+    assert preview["context"]["override_sources"] == {"seed": "input"}
 
 
 def test_preview_uses_the_same_override_context_as_saving(tmp_path):

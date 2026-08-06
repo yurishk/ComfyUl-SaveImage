@@ -1,15 +1,15 @@
 export const VARIABLE_CONFIG_VERSION = 1;
 
 export const KNOWN_VARIABLE_KEYS = [
-  "unet",
-  "lora",
-  "loras",
-  "vae",
   "seed",
   "steps",
   "cfg",
   "sampler",
   "scheduler",
+  "unet",
+  "lora",
+  "loras",
+  "vae",
   "width",
   "height",
   "prompt",
@@ -17,6 +17,24 @@ export const KNOWN_VARIABLE_KEYS = [
 ];
 
 const KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
+const RESERVED_CUSTOM_KEYS = new Set([
+  ...KNOWN_VARIABLE_KEYS,
+  "date", "year", "month", "day", "hour", "minute", "second", "batch",
+  "model", "model_full",
+]);
+const INPUT_TYPES = {
+  unet: "*",
+  lora: "*",
+  loras: "STRING",
+  vae: "*",
+  seed: "INT",
+  steps: "INT",
+  cfg: "FLOAT",
+  width: "INT",
+  height: "INT",
+  prompt: "STRING",
+  negative: "STRING",
+};
 let nextId = 0;
 
 function makeId() {
@@ -37,6 +55,23 @@ export function createVariableItem(key = "seed", value = "") {
   };
 }
 
+export function variableInputName(id) {
+  const safeId = String(id ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
+  return `variable_${safeId}`;
+}
+
+export function variableInputType(key) {
+  const normalized = normalizeVariableKey(key);
+  if (Object.hasOwn(INPUT_TYPES, normalized)) return INPUT_TYPES[normalized];
+  if (normalized && !RESERVED_CUSTOM_KEYS.has(normalized)) return "STRING";
+  return null;
+}
+
+export function isCustomVariableKey(key) {
+  const normalized = normalizeVariableKey(key);
+  return Boolean(normalized && !RESERVED_CUSTOM_KEYS.has(normalized));
+}
+
 export function parseVariableConfig(value) {
   let source = value;
   if (typeof value === "string") {
@@ -50,13 +85,17 @@ export function parseVariableConfig(value) {
   const rawItems = Array.isArray(source) ? source : source?.items;
   if (!Array.isArray(rawItems)) return [];
 
+  const usedIds = new Set();
   return rawItems.flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
     const key = normalizeVariableKey(raw.key);
     if (!key) return [];
     const rawId = String(raw.id ?? "");
+    let id = /^[A-Za-z0-9_-]+$/.test(rawId) ? rawId : makeId();
+    if (usedIds.has(id)) id = makeId();
+    usedIds.add(id);
     return [{
-      id: /^[A-Za-z0-9_-]+$/.test(rawId) ? rawId : makeId(),
+      id,
       key,
       value: String(raw.value ?? ""),
     }];

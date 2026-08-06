@@ -35,6 +35,41 @@ function safeWidgetValue(value) {
   return undefined;
 }
 
+const PREVIEW_VALUE_WIDGETS = {
+  model: ["ckpt_name", "unet_name", "model_name", "value", "text"],
+  unet: ["unet_name", "diffusion_model_name", "model_name", "value", "text"],
+  lora: ["lora_name", "value", "text"],
+  loras: ["lora_name", "value", "text"],
+  vae: ["vae_name", "value", "text"],
+  seed: ["value", "seed", "noise_seed"],
+  steps: ["value", "steps"],
+  cfg: ["value", "cfg"],
+  width: ["value", "width"],
+  height: ["value", "height"],
+  prompt: ["value", "text", "prompt"],
+  negative: ["value", "text", "negative"],
+};
+
+export function collectConnectedPreviewValues(graph, targetNode, specs) {
+  const values = {};
+  for (const spec of specs || []) {
+    const targetInput = targetNode?.inputs?.find((input) => input.name === spec.inputName);
+    const link = getLink(graph, targetInput?.link);
+    const source = link ? graph?.getNodeById?.(link.origin_id) : null;
+    if (!source) continue;
+    const preferred = PREVIEW_VALUE_WIDGETS[spec.key] || ["value", "text"];
+    for (const name of preferred) {
+      const sourceWidget = source.widgets?.find((widget) => widget.name === name);
+      if (!sourceWidget) continue;
+      const value = safeWidgetValue(sourceWidget.value);
+      if (value === undefined || (value !== null && typeof value === "object")) continue;
+      values[spec.inputName] = value;
+      break;
+    }
+  }
+  return values;
+}
+
 /**
  * Build only the metadata subset needed by SmartSave's path preview.
  * Reading widget.value directly is intentional: serializeValue and queue hooks
@@ -51,6 +86,11 @@ export function buildReadOnlyPrompt(graph, targetNode = null) {
       if (!widget?.name || widget?.options?.serialize === false) continue;
       const value = safeWidgetValue(widget.value);
       if (value !== undefined) inputs[widget.name] = value;
+    }
+    for (const input of node?.inputs || []) {
+      const link = getLink(graph, input?.link);
+      if (!input?.name || !link) continue;
+      inputs[input.name] = [String(link.origin_id), link.origin_slot ?? 0];
     }
     prompt[String(node.id)] = {
       class_type: node.comfyClass || node.type || "",

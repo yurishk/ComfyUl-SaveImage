@@ -1,15 +1,31 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { buildReadOnlyPrompt } from "./read_only_prompt.mjs";
+import {
+  buildReadOnlyPrompt,
+  collectConnectedPreviewValues,
+} from "./read_only_prompt.mjs?v=3";
 import {
   KNOWN_VARIABLE_KEYS,
   createVariableItem,
+  isCustomVariableKey,
   parseVariableConfig,
   serializeVariableConfig,
-} from "./variable_config.mjs";
+  variableInputName,
+  variableInputType,
+} from "./variable_config.mjs?v=3";
 
 const NODE_NAME = "SmartSaveImage";
-const CSS_HREF = new URL("./smart_save.css", import.meta.url).href;
+const CSS_HREF = new URL("./smart_save.css?v=3", import.meta.url).href;
+let variableOptionsPromise = null;
+
+function fetchVariableOptions() {
+  if (!variableOptionsPromise) {
+    variableOptionsPromise = api.fetchApi("/smartsave/options")
+      .then((response) => response.ok ? response.json() : null)
+      .catch(() => null);
+  }
+  return variableOptionsPromise;
+}
 
 // 需要隐藏并由自定义面板托管的原生 widget
 const MANAGED_WIDGETS = [
@@ -65,15 +81,15 @@ function tokenGroups(tr) {
 
 function variableDefinitions(tr) {
   return [
-    ["unet", tr("UNet / 扩散模型", "UNet / Diffusion Model")],
-    ["lora", tr("首个 LoRA", "First LoRA")],
-    ["loras", tr("全部 LoRA", "All LoRAs")],
-    ["vae", "VAE"],
     ["seed", tr("种子", "Seed")],
     ["steps", tr("步数", "Steps")],
     ["cfg", "CFG"],
     ["sampler", tr("采样器", "Sampler")],
     ["scheduler", tr("调度器", "Scheduler")],
+    ["unet", tr("UNet / 扩散模型", "UNet / Diffusion Model")],
+    ["lora", tr("首个 LoRA", "First LoRA")],
+    ["loras", tr("全部 LoRA", "All LoRAs")],
+    ["vae", "VAE"],
     ["width", tr("宽度", "Width")],
     ["height", tr("高度", "Height")],
     ["prompt", tr("正向提示词", "Positive Prompt")],
@@ -114,6 +130,19 @@ function setWidget(node, name, value) {
   w.callback?.(value);
 }
 
+function getInput(node, name) {
+  return node.inputs?.find((input) => input.name === name);
+}
+
+function inputConnected(input) {
+  return input?.link !== null && input?.link !== undefined;
+}
+
+function removeInput(node, name) {
+  const index = node.inputs?.findIndex((input) => input.name === name) ?? -1;
+  if (index >= 0) node.removeInput(index);
+}
+
 function hideWidget(node, name) {
   const w = getWidget(node, name);
   if (!w) return;
@@ -124,6 +153,8 @@ function hideWidget(node, name) {
 }
 
 function buildPanel(node) {
+  if (node.__ssiPanelBuilt) return;
+  node.__ssiPanelBuilt = true;
   const tr = createTranslator();
   const tokens = tokenGroups(tr);
   const variableDefs = variableDefinitions(tr);
@@ -131,7 +162,13 @@ function buildPanel(node) {
   let debounceTimer = null;
   let previewRequest = 0;
   let variableItems = parseVariableConfig(widgetValue(node, "variable_overrides", ""));
+  let variableOptions = { unet: [], lora: [], vae: [], sampler: [], scheduler: [] };
+  let panelWidget = null;
+  let rowElements = new Map();
+  let syncingInputs = false;
 
+  // Reserve one native row for images; variable sockets are positioned beside DOM rows.
+  node.widgets_start_y = (globalThis.LiteGraph?.NODE_SLOT_HEIGHT || 20) + 4;
   node.serialize_widgets = true;
   for (const name of MANAGED_WIDGETS) hideWidget(node, name);
 
@@ -250,8 +287,84 @@ function buildPanel(node) {
     schedulePreview();
   }
 
+  function syncVariableInputs() {
+    syncingInputs = true;
+    try {
+      const desired = variableItems.flatMap((item) => {
+        const type = variableInputType(item.key);
+        return type ? [{ name: variableInputName(item.id), type }] : [];
+      });
+      const desiredNames = new Set(desired.map((item) => item.name));
+      const obsolete = (node.inputs || [])
+        .filter((input) => input.name.startsWith("variable_") && !desiredNames.has(input.name))
+        .map((input) => input.name);
+      for (const name of obsolete) removeInput(node, name);
+      for (const item of desired) {
+        let input = getInput(node, item.name);
+        if (!input) input = node.addInput(item.name, item.type);
+        input.type = item.type;
+        input.label = " ";
+        input.localized_name = " ";
+      }
+      const modelInput = getInput(node, "model_input");
+      if (modelInput) {
+        modelInput.label = " ";
+        modelInput.localized_name = " ";
+      }
+    } finally {
+      syncingInputs = false;
+    }
+  }
+
+  function makeOverrideValueControl(item, connected) {
+    const choices = variableOptions[item.key] || [];
+    let control;
+    if (choices.length > 0) {
+      control = el("select", "ssi-select ssi-override-value");
+      const automatic = el("option", null, tr("自动读取", "Auto Detect"));
+      automatic.value = "";
+      control.append(automatic);
+      if (item.value && !choices.includes(item.value)) {
+        const missing = el("option", null, `${item.value}${tr("（当前不可用）", " (currently unavailable)")}`);
+        missing.value = item.value;
+        control.append(missing);
+      }
+      for (const choice of choices) {
+        const option = el("option", null, choice);
+        option.value = choice;
+        control.append(option);
+      }
+      control.value = item.value;
+      control.onchange = () => {
+        item.value = control.value;
+        persistVariableItems();
+      };
+    } else {
+      control = el("input", "ssi-input ssi-override-value");
+      if (["seed", "steps", "width", "height", "cfg"].includes(item.key)) {
+        control.type = "number";
+        control.step = item.key === "cfg" ? "0.01" : "1";
+      }
+      control.value = item.value;
+      control.placeholder = knownVariableKeys.has(item.key)
+        ? tr("留空自动读取", "Blank uses auto-detect")
+        : tr("自定义值", "Custom value");
+      control.title = item.value;
+      control.oninput = () => {
+        item.value = control.value;
+        control.title = item.value;
+        persistVariableItems();
+      };
+    }
+    control.disabled = connected;
+    if (connected) control.title = tr("已连接外部输入，运行时值优先", "External input connected; runtime value has priority");
+    return control;
+  }
+
   function renderVariableItems() {
+    syncVariableInputs();
     overrideList.replaceChildren();
+    rowElements = new Map();
     overrideCount.textContent = String(variableItems.length);
     overrideCount.classList.toggle("ssi-count-active", variableItems.length > 0);
 
@@ -262,6 +375,13 @@ function buildPanel(node) {
 
     for (const item of variableItems) {
       const row = el("div", "ssi-override-row");
+      const inputName = variableInputName(item.id);
+      const supportsInput = variableInputType(item.key) !== null;
+      const connected = supportsInput && inputConnected(getInput(node, inputName));
+      if (connected) {
+        row.classList.add("ssi-override-connected");
+        row.title = tr("外部输入已连接，运行时值优先", "External input connected; runtime value has priority");
+      }
       if (keyCounts.get(item.key) > 1) {
         row.classList.add("ssi-override-duplicate");
         row.title = tr("同名变量重复，最后一项生效", "Duplicate variable: the last value wins");
@@ -283,10 +403,13 @@ function buildPanel(node) {
         const customKey = el("input", "ssi-input ssi-custom-key");
         customKey.value = item.key;
         customKey.placeholder = tr("变量名", "Token name");
-        customKey.title = tr("仅限英文字母、数字和下划线，必须以字母开头", "Letters, numbers, and underscores; must start with a letter");
+        customKey.title = tr(
+          "仅限英文字母、数字和下划线，必须以字母开头，且不能与内置变量重名",
+          "Letters, numbers, and underscores; start with a letter and do not reuse a built-in token",
+        );
         customKey.onchange = () => {
           const normalized = customKey.value.trim().toLowerCase();
-          if (!/^[a-z][a-z0-9_]*$/.test(normalized)) {
+          if (!isCustomVariableKey(normalized)) {
             customKey.value = item.key;
             customKey.classList.add("ssi-input-invalid");
             return;
@@ -299,15 +422,7 @@ function buildPanel(node) {
         valueWrap.append(customKey);
       }
 
-      const valueInput = el("input", "ssi-input ssi-override-value");
-      valueInput.value = item.value;
-      valueInput.placeholder = tr("自定义值", "Custom value");
-      valueInput.title = item.value;
-      valueInput.oninput = () => {
-        item.value = valueInput.value;
-        valueInput.title = item.value;
-        persistVariableItems();
-      };
+      const valueInput = makeOverrideValueControl(item, connected);
       valueWrap.append(valueInput);
 
       const tokenButton = el("button", "ssi-variable-token", `%${item.key}%`);
@@ -333,7 +448,11 @@ function buildPanel(node) {
 
       row.append(typeSelect, valueWrap, tokenButton, removeButton);
       overrideList.append(row);
+      if (supportsInput) rowElements.set(inputName, row);
     }
+    rowElements.set("model_input", modelRow);
+    syncModelInputState();
+    requestAnimationFrame(updateInputPositions);
     requestAnimationFrame(fitNodeToPanel);
   }
 
@@ -341,9 +460,9 @@ function buildPanel(node) {
     const used = new Set(variableItems.map((item) => item.key));
     const available = KNOWN_VARIABLE_KEYS.find((key) => !used.has(key));
     variableItems.push(createVariableItem(available || nextCustomKey()));
+    overrides.open = true;
     persistVariableItems();
     renderVariableItems();
-    overrideList.scrollTop = overrideList.scrollHeight;
   };
 
   // ---- 模型来源 ----
@@ -357,7 +476,16 @@ function buildPanel(node) {
   }
   modelSelect.value = widgetValue(node, "manual_model", "auto");
   modelSelect.onchange = () => { setWidget(node, "manual_model", modelSelect.value); schedulePreview(); };
-  modelRow.append(modelSelect);
+  const modelConnection = el("span", "ssi-input-state");
+  modelRow.append(modelSelect, modelConnection);
+
+  function syncModelInputState() {
+    const connected = inputConnected(getInput(node, "model_input"));
+    modelSelect.disabled = connected;
+    modelConnection.textContent = connected ? tr("外部输入", "External") : tr("手动 / 自动", "Manual / Auto");
+    modelConnection.classList.toggle("ssi-input-state-connected", connected);
+    modelRow.classList.toggle("ssi-model-connected", connected);
+  }
 
   // ---- 格式 / 压缩 / 冲突 / 模式 ----
   const optGrid = el("div", "ssi-grid");
@@ -451,6 +579,7 @@ function buildPanel(node) {
     digitsInput.value = widgetValue(node, "counter_digits", 3);
     embedBox.checked = widgetValue(node, "embed_workflow", true) !== false;
     variableItems = parseVariableConfig(widgetValue(node, "variable_overrides", ""));
+    if (variableItems.some((item) => variableInputType(item.key) !== null)) overrides.open = true;
     renderVariableItems();
     syncFormat();
     syncRoot();
@@ -462,8 +591,18 @@ function buildPanel(node) {
     statusLine.textContent = tr("正在计算…", "Calculating...");
     statusLine.className = "ssi-status";
     try {
+      const previewInputSpecs = [
+        { inputName: "model_input", key: "model" },
+        ...variableItems.flatMap((item) => variableInputType(item.key)
+          ? [{ inputName: variableInputName(item.id), key: item.key }]
+          : []),
+      ];
       const payload = {
         prompt: buildReadOnlyPrompt(app.graph, node),
+        external_values: collectConnectedPreviewValues(app.graph, node, previewInputSpecs),
+        connected_inputs: previewInputSpecs
+          .filter((spec) => inputConnected(getInput(node, spec.inputName)))
+          .map((spec) => spec.inputName),
         root_mode: widgetValue(node, "root_mode", "output"),
         custom_root: widgetValue(node, "custom_root", ""),
         folder_template: widgetValue(node, "folder_template", ""),
@@ -471,6 +610,7 @@ function buildPanel(node) {
         file_format: widgetValue(node, "file_format", "png"),
         manual_model: widgetValue(node, "manual_model", "auto"),
         variable_overrides: widgetValue(node, "variable_overrides", ""),
+        unique_id: String(node.id),
         counter_digits: widgetValue(node, "counter_digits", 3),
         collision_mode: widgetValue(node, "collision_mode", "increment"),
         batch_size: 1,
@@ -494,6 +634,7 @@ function buildPanel(node) {
       fileLine.textContent = tr("示例文件：", "Example file: ") + examples;
       const c = data.context || {};
       const overridden = new Set(c.overridden || []);
+      const overrideSources = c.override_sources || {};
       ctxLine.innerHTML = "";
       const chips = [
         [tr("模型", "Model"), c.model, "model"], ["LoRA", c.lora, "lora"], [tr("种子", "Seed"), c.seed, "seed"],
@@ -503,11 +644,13 @@ function buildPanel(node) {
         if (!v) continue;
         const tag = el("span", "ssi-ctx-tag");
         if (overridden.has(key) || (key === "width" && overridden.has("height"))) tag.classList.add("ssi-ctx-overridden");
+        if (overrideSources[key] === "input") tag.title = tr("来自外部输入", "From external input");
         tag.append(el("b", null, k + tr("：", ": ")), document.createTextNode(v));
         ctxLine.append(tag);
       }
       for (const [key, value] of Object.entries(c.custom || {})) {
         const tag = el("span", "ssi-ctx-tag ssi-ctx-overridden");
+        if (overrideSources[key] === "input") tag.title = tr("来自外部输入", "From external input");
         tag.append(el("b", null, `%${key}%` + tr("：", ": ")), document.createTextNode(value));
         ctxLine.append(tag);
       }
@@ -544,12 +687,26 @@ function buildPanel(node) {
     return Math.ceil(padding + childrenHeight + gap * Math.max(visibleChildren.length - 1, 0));
   }
 
-  const widget = node.addDOMWidget("smart_save_panel", "smart-save", root, {
+  panelWidget = node.addDOMWidget("smart_save_panel", "smart-save", root, {
     serialize: false,
     getMinHeight() { return Math.max(360, panelContentHeight() + 8); },
-    getMaxHeight() { return 1200; },
+    getMaxHeight() { return Math.max(360, panelContentHeight() + 8); },
   });
-  widget.serialize = false;
+  panelWidget.serialize = false;
+
+  function updateInputPositions() {
+    if (!panelWidget || !root.isConnected) return;
+    const rootRect = root.getBoundingClientRect();
+    const scale = root.offsetHeight > 0 ? rootRect.height / root.offsetHeight : 1;
+    for (const [inputName, row] of rowElements) {
+      const input = getInput(node, inputName);
+      if (!input || !row?.isConnected) continue;
+      const rowRect = row.getBoundingClientRect();
+      const offset = (rowRect.top - rootRect.top + rowRect.height / 2) / (scale || 1);
+      input.pos = [0, panelWidget.y + offset + (panelWidget.margin || 0)];
+    }
+    app.graph?.setDirtyCanvas(true, false);
+  }
 
   function fitNodeToPanel() {
     const host = root.parentElement;
@@ -560,12 +717,44 @@ function buildPanel(node) {
       node.setSize([desiredWidth, desiredHeight]);
       app.graph.setDirtyCanvas(true, true);
     }
+    updateInputPositions();
   }
 
   const panelObserver = new ResizeObserver(() => requestAnimationFrame(fitNodeToPanel));
   panelObserver.observe(root);
   palette.addEventListener("toggle", () => requestAnimationFrame(fitNodeToPanel));
-  overrides.addEventListener("toggle", () => requestAnimationFrame(fitNodeToPanel));
+  overrides.addEventListener("toggle", () => {
+    if (!overrides.open && variableItems.some((item) => variableInputType(item.key) !== null)) {
+      requestAnimationFrame(() => { overrides.open = true; });
+      return;
+    }
+    requestAnimationFrame(fitNodeToPanel);
+  });
+
+  const onConnectionsChange = node.onConnectionsChange;
+  node.onConnectionsChange = function () {
+    const result = onConnectionsChange?.apply(this, arguments);
+    if (!syncingInputs) {
+      requestAnimationFrame(() => {
+        syncFromWidgets();
+        schedulePreview();
+      });
+    }
+    return result;
+  };
+
+  const onSerialize = node.onSerialize;
+  node.onSerialize = function () {
+    persistVariableItems();
+    return onSerialize?.apply(this, arguments);
+  };
+
+  const onDrawForeground = node.onDrawForeground;
+  node.onDrawForeground = function () {
+    const result = onDrawForeground?.apply(this, arguments);
+    if (!this.flags?.collapsed) updateInputPositions();
+    return result;
+  };
 
   const onRemoved = node.onRemoved;
   node.onRemoved = function () {
@@ -575,6 +764,11 @@ function buildPanel(node) {
   };
 
   syncFromWidgets();
+  fetchVariableOptions().then((options) => {
+    if (!options) return;
+    variableOptions = { ...variableOptions, ...options };
+    renderVariableItems();
+  });
   requestAnimationFrame(() => {
     node.setSize([Math.max(node.size[0], 420), Math.max(node.size[1], 500)]);
     requestAnimationFrame(fitNodeToPanel);
@@ -622,5 +816,16 @@ app.registerExtension({
       onConfigure?.apply(this, arguments);
       requestAnimationFrame(() => this.__ssi_refresh?.());
     };
+
+    const configure = nodeType.prototype.configure;
+    nodeType.prototype.configure = function () {
+      const result = configure?.apply(this, arguments);
+      requestAnimationFrame(() => this.__ssi_refresh?.());
+      return result;
+    };
+  },
+  loadedGraphNode(node) {
+    if ((node.comfyClass || node.type) !== NODE_NAME) return;
+    requestAnimationFrame(() => node.__ssi_refresh?.());
   },
 });

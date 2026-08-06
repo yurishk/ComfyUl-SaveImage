@@ -142,9 +142,6 @@
   flex-direction: column;
   gap: 5px;
   margin-top: 7px;
-  max-height: 310px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
 .ssi-override-row {
@@ -153,6 +150,17 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+.ssi-override-connected {
+  background: rgba(91, 157, 255, 0.07);
+  box-shadow: inset 2px 0 rgba(91, 157, 255, 0.75);
+}
+
+.ssi-override-connected .ssi-override-value:disabled,
+.ssi-model-connected .ssi-select:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
 }
 
 .ssi-override-row .ssi-input,
@@ -223,6 +231,25 @@
 
 .ssi-input-invalid {
   border-color: #e46565 !important;
+}
+
+.ssi-input-state {
+  flex: 0 0 auto;
+  min-width: 72px;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--descrip-text, #8a93a2);
+  text-align: center;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ssi-input-state-connected {
+  background: rgba(91, 157, 255, 0.18);
+  color: #9fc3ff;
 }
 
 .ssi-palette-summary {

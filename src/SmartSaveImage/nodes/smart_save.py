@@ -41,6 +41,7 @@ except Exception:  # pragma: no cover - 测试环境可能没有
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _DATE_TOKEN = re.compile(r"%date(?::([^%]+))?%", re.IGNORECASE)
 _CUSTOM_TOKEN_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_VARIABLE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
@@ -82,6 +83,38 @@ _RESERVED_CUSTOM_KEYS = {
     "date", "year", "month", "day", "hour", "minute", "second", "batch",
     "model", "model_full", *VARIABLE_ALIASES,
 }
+_EXTERNAL_INPUT_KEYS = {
+    "unet", "lora", "loras", "vae", "seed", "steps", "cfg",
+    "width", "height", "prompt", "negative",
+}
+
+
+class AnyType(str):
+    def __ne__(self, other):
+        return False
+
+
+ANY = AnyType("*")
+MISSING = object()
+
+
+class FlexibleOptionalInputType(dict):
+    """Accept frontend-defined override sockets while preserving known input specs."""
+
+    def __init__(self, dynamic_spec, data=None):
+        super().__init__(data or {})
+        self.dynamic_spec = dynamic_spec
+
+    def __getitem__(self, key):
+        return super().__getitem__(key) if dict.__contains__(self, key) else self.dynamic_spec
+
+    def __contains__(self, key):
+        return True
+
+
+def variable_input_name(item_id: Any) -> str:
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(item_id or ""))
+    return f"variable_{safe_id}"
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +252,104 @@ def extract_context(prompt: Any, width: int = 0, height: int = 0) -> dict[str, A
     return ctx
 
 
+def _prompt_node(prompt: Any, node_id: Any) -> dict[str, Any] | None:
+    if not isinstance(prompt, dict):
+        return None
+    node = prompt.get(str(node_id), prompt.get(node_id))
+    return node if isinstance(node, dict) else None
+
+
+def _connected_source(prompt: Any, unique_id: Any, input_name: str) -> tuple[Any, int] | None:
+    current = _prompt_node(prompt, unique_id)
+    candidates = [current] if current else []
+    if not candidates and isinstance(prompt, dict):
+        candidates = [
+            node for node in prompt.values()
+            if isinstance(node, dict) and node.get("class_type") == "SmartSaveImage"
+        ]
+    for node in candidates:
+        value = (node.get("inputs") or {}).get(input_name)
+        if _is_link(value):
+            return value[0], int(value[1])
+    return None
+
+
+def _upstream_prompt(prompt: Any, source_id: Any) -> dict[str, Any]:
+    subset: dict[str, Any] = {}
+    pending = [source_id]
+    while pending:
+        node_id = pending.pop()
+        key = str(node_id)
+        if key in subset:
+            continue
+        node = _prompt_node(prompt, node_id)
+        if not node:
+            continue
+        subset[key] = node
+        for value in (node.get("inputs") or {}).values():
+            if _is_link(value):
+                pending.append(value[0])
+    return subset
+
+
+def _linked_variable_value(prompt: Any, unique_id: Any, input_name: str, key: str) -> str | None:
+    source = _connected_source(prompt, unique_id, input_name)
+    if not source:
+        return None
+    source_id, _ = source
+    subset = _upstream_prompt(prompt, source_id)
+    linked_ctx = extract_context(subset)
+    context_key = {
+        "model": "model_full",
+        "unet": "unet",
+        "lora": "lora",
+        "vae": "vae",
+    }.get(key)
+    if context_key and linked_ctx.get(context_key):
+        return str(linked_ctx[context_key])
+    if key == "loras" and linked_ctx.get("loras"):
+        return ",".join(linked_ctx["loras"])
+
+    source_node = _prompt_node(prompt, source_id) or {}
+    source_inputs = source_node.get("inputs") or {}
+    preferred = {
+        "seed": ("seed", "noise_seed", "value"),
+        "steps": ("steps", "value"),
+        "cfg": ("cfg", "value"),
+        "width": ("width", "value"),
+        "height": ("height", "value"),
+        "prompt": ("text", "prompt", "value"),
+        "negative": ("text", "negative", "value"),
+    }.get(key, ("value", "text"))
+    for candidate in preferred:
+        value = source_inputs.get(candidate)
+        if isinstance(value, (str, int, float, bool)) and not _is_link(value):
+            return str(value)
+    return None
+
+
+def _runtime_variable_value(value: Any) -> str | None:
+    if value is MISSING:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    if isinstance(value, (list, tuple)) and all(isinstance(item, (str, int, float, bool)) for item in value):
+        return ",".join(str(item) for item in value)
+    return None
+
+
+def _normalise_named_value(key: str, value: str) -> str:
+    if key in {"unet", "lora", "vae"}:
+        return Path(value).stem
+    if key == "loras":
+        return ",".join(
+            Path(part.strip()).stem
+            for part in re.split(r"[,;\n]+", value)
+            if part.strip()
+        )
+    return value
+
+
 def parse_variable_config(value: Any) -> list[dict[str, str]]:
     """Parse per-node overrides without allowing malformed workflow data to fail a save."""
     source = value
@@ -241,20 +372,50 @@ def parse_variable_config(value: Any) -> list[dict[str, str]]:
         key = str(raw.get("key", "")).strip().lower()
         if not _CUSTOM_TOKEN_KEY.fullmatch(key):
             continue
-        items.append({"key": key, "value": str(raw.get("value", ""))})
+        item_id = str(raw.get("id", "")).strip()
+        items.append({
+            "id": item_id if _VARIABLE_ID.fullmatch(item_id) else "",
+            "key": key,
+            "value": str(raw.get("value", "")),
+        })
     return items
 
 
-def apply_variable_overrides(ctx: dict[str, Any], config: Any) -> dict[str, Any]:
+def apply_variable_overrides(
+    ctx: dict[str, Any],
+    config: Any,
+    external_values: dict[str, Any] | None = None,
+    prompt: Any = None,
+    unique_id: Any = None,
+    connected_inputs: set[str] | None = None,
+    preview_mode: bool = False,
+) -> dict[str, Any]:
     """Return a copied context with known-field and custom-token overrides applied."""
     result = dict(ctx)
     result["loras"] = list(ctx.get("loras") or [])
     result["custom"] = dict(ctx.get("custom") or {})
     overridden: list[str] = []
+    override_sources: dict[str, str] = {}
+    external_values = external_values or {}
+    connected_inputs = connected_inputs or set()
 
     for item in parse_variable_config(config):
         key = item["key"]
         value = item["value"]
+        source = "manual"
+        input_name = variable_input_name(item["id"])
+        if item["id"] and (key in _EXTERNAL_INPUT_KEYS or key not in VARIABLE_ALIASES):
+            runtime_value = _runtime_variable_value(external_values.get(input_name, MISSING))
+            linked_value = _linked_variable_value(prompt, unique_id, input_name, key)
+            if runtime_value is not None or linked_value is not None:
+                value = runtime_value if runtime_value is not None else linked_value
+                source = "input"
+            elif preview_mode and (
+                input_name in connected_inputs or _connected_source(prompt, unique_id, input_name)
+            ):
+                value = "runtime"
+                source = "input"
+        value = _normalise_named_value(key, value)
         target = VARIABLE_ALIASES.get(key)
         if target:
             # An unfinished/cleared known override falls back to workflow detection.
@@ -268,11 +429,14 @@ def apply_variable_overrides(ctx: dict[str, Any], config: Any) -> dict[str, Any]
             if key == "lora":
                 result["loras"] = [value] if value else []
             overridden.append(key)
+            override_sources[key] = source
         elif key not in _RESERVED_CUSTOM_KEYS:
             result["custom"][key] = value
             overridden.append(key)
+            override_sources[key] = source
 
     result["overridden"] = list(dict.fromkeys(overridden))
+    result["override_sources"] = override_sources
     return result
 
 
@@ -282,13 +446,45 @@ def resolve_template_context(
     height: int = 0,
     manual_model: str = "auto",
     variable_overrides: Any = EMPTY_VARIABLE_CONFIG,
+    *,
+    external_values: dict[str, Any] | None = None,
+    unique_id: Any = None,
+    model_input: Any = MISSING,
+    connected_inputs: set[str] | None = None,
+    preview_mode: bool = False,
 ) -> dict[str, Any]:
     """Build the final per-save-node context used by both preview and execution."""
     ctx = extract_context(prompt, width, height)
     if manual_model and manual_model != "auto":
         ctx["model_full"] = manual_model
         ctx["model"] = Path(manual_model).stem
-    return apply_variable_overrides(ctx, variable_overrides)
+    model_source = None
+    model_value = _runtime_variable_value(model_input)
+    if model_value is None:
+        model_value = _linked_variable_value(prompt, unique_id, "model_input", "model")
+    if model_value:
+        ctx["model_full"] = model_value
+        ctx["model"] = Path(model_value).stem
+        model_source = "input"
+    elif preview_mode and (
+        "model_input" in (connected_inputs or set())
+        or _connected_source(prompt, unique_id, "model_input")
+    ):
+        ctx["model_full"] = "runtime_model"
+        ctx["model"] = "runtime_model"
+        model_source = "input"
+    result = apply_variable_overrides(
+        ctx,
+        variable_overrides,
+        external_values=external_values,
+        prompt=prompt,
+        unique_id=unique_id,
+        connected_inputs=connected_inputs,
+        preview_mode=preview_mode,
+    )
+    if model_source:
+        result["override_sources"]["model"] = model_source
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -498,7 +694,10 @@ class SmartSaveImage:
                     "default": cls.MODE_SAVE_PREVIEW,
                 }),
             },
-            "optional": {
+            "optional": FlexibleOptionalInputType((ANY, {
+                "forceInput": True,
+                "tooltip": "由变量覆盖面板创建的外部输入。",
+            }), {
                 "manual_model": (model_choices, {
                     "default": "auto",
                     "tooltip": "手动指定模型名以覆盖自动读取（auto=自动从工作流读取）。",
@@ -520,10 +719,15 @@ class SmartSaveImage:
                     "multiline": True,
                     "tooltip": "当前保存节点独立使用的模板变量覆盖与自定义变量。",
                 }),
-            },
+                "model_input": (ANY, {
+                    "forceInput": True,
+                    "tooltip": "可连接模型对象或模型名称；连接后优先于手动模型来源。",
+                }),
+            }),
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
+                "unique_id": "UNIQUE_ID",
             },
         }
 
@@ -676,7 +880,8 @@ class SmartSaveImage:
     def save_images(self, images, root_mode, custom_root, folder_template, filename_template,
                     file_format, quality, collision_mode, save_mode,
                     manual_model="auto", embed_workflow=True, counter_digits=3, png_compression=4,
-                    variable_overrides=EMPTY_VARIABLE_CONFIG, prompt=None, extra_pnginfo=None):
+                    variable_overrides=EMPTY_VARIABLE_CONFIG, model_input=MISSING,
+                    prompt=None, extra_pnginfo=None, unique_id=None, **dynamic_inputs):
 
         if save_mode == self.MODE_PREVIEW_ONLY:
             return comfy_nodes.PreviewImage().save_images(
@@ -691,6 +896,9 @@ class SmartSaveImage:
             height,
             manual_model,
             variable_overrides,
+            external_values=dynamic_inputs,
+            unique_id=unique_id,
+            model_input=model_input,
         )
 
         root, target_folder = resolve_target(root_mode, custom_root, folder_template, ctx)
