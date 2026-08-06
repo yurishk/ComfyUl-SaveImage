@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-save-image"
-version = "2.0.1"
+version = "2.0.2"
 description = "A visual, template-driven ComfyUI image saver with live path previews"
 authors = [
   {name = "yurishk"}
@@ -40,6 +40,7 @@ Repository = "https://github.com/yurishk/ComfyUl-SaveImage"
 [tool.comfy]
 PublisherId = "yurishk"
 DisplayName = "Smart Save Image"
+Icon = "https://sywb.top/Staticfiles/pic/SmartSaveImage-preview.png"
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]

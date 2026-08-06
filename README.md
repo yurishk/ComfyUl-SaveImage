@@ -1,6 +1,6 @@
 # Smart Save Image
 
-**English** | [简体中文](#简体中文)
+English | [简体中文](#简体中文)
 
 ## English
 
@@ -52,7 +52,7 @@ Install `smart-save-image` from ComfyUI Manager, or clone this repository into `
 
 ## 简体中文
 
-[English](#english) | **简体中文**
+[English](#english) | 简体中文
 
 一个带实时路径预览的 ComfyUI 图片保存节点。节点菜单中搜索 **智能保存图片**。
 
