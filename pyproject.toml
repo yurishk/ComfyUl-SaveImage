@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-save-image"
-version = "2.2.0"
+version = "2.2.1"
 description = "A visual, template-driven ComfyUI image saver with live path previews"
 authors = [
   {name = "yurishk"}

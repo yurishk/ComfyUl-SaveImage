@@ -4,6 +4,7 @@ import {
   buildReadOnlyPrompt,
   collectConnectedPreviewValues,
 } from "./read_only_prompt.mjs?v=3";
+import { slotPositionChanged } from "./layout_state.mjs?v=1";
 import {
   KNOWN_VARIABLE_KEYS,
   createVariableItem,
@@ -698,14 +699,18 @@ function buildPanel(node) {
     if (!panelWidget || !root.isConnected) return;
     const rootRect = root.getBoundingClientRect();
     const scale = root.offsetHeight > 0 ? rootRect.height / root.offsetHeight : 1;
+    let changed = false;
     for (const [inputName, row] of rowElements) {
       const input = getInput(node, inputName);
       if (!input || !row?.isConnected) continue;
       const rowRect = row.getBoundingClientRect();
       const offset = (rowRect.top - rootRect.top + rowRect.height / 2) / (scale || 1);
-      input.pos = [0, panelWidget.y + offset + (panelWidget.margin || 0)];
+      const nextPosition = [0, panelWidget.y + offset + (panelWidget.margin || 0)];
+      if (!slotPositionChanged(input.pos, nextPosition)) continue;
+      input.pos = nextPosition;
+      changed = true;
     }
-    app.graph?.setDirtyCanvas(true, false);
+    if (changed) app.graph?.setDirtyCanvas(true, false);
   }
 
   function fitNodeToPanel() {
@@ -745,7 +750,8 @@ function buildPanel(node) {
 
   const onSerialize = node.onSerialize;
   node.onSerialize = function () {
-    persistVariableItems();
+    const configWidget = getWidget(node, "variable_overrides");
+    if (configWidget) configWidget.value = serializeVariableConfig(variableItems);
     return onSerialize?.apply(this, arguments);
   };
 
