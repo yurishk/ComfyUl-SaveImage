@@ -13,6 +13,7 @@ A visual, template-driven image saver for ComfyUI. It previews the final destina
 - Live destination folder and example filename preview.
 - Output, input, temp, relative, and absolute destination roots.
 - Reusable date, model, sampler, prompt, size, and batch tokens.
+- Per-node overrides for every detected template value, plus unlimited custom tokens.
 - PNG, JPEG, and WebP output.
 - Collision-safe automatic numbering or overwrite mode.
 - Optional workflow metadata embedding.
@@ -27,12 +28,23 @@ A visual, template-driven image saver for ComfyUI. It previews the final destina
 
 The template token panel is collapsed by default. Focus either rule field, then click a token to insert it.
 
+### Variable Overrides
+
+Smart Save automatically detects model, LoRA, VAE, sampling, prompt, and image values. Open **Variable Overrides** only when this particular Save node needs different values:
+
+1. Click **Add Override** and choose a detected field, such as Seed, Sampler, or Positive Prompt.
+2. Enter the replacement value. The path preview updates immediately.
+3. Choose **Custom** to create a named token such as `project`; use the row's `%project%` button to insert it into either rule.
+
+Each Smart Save node stores its own unlimited list. A blank known value keeps the automatic value, and deleting an override restores automatic detection.
+
 ## Template Tokens
 
 - Time: `%date:yyyy-MM-dd%`, `%year%`, `%month%`, `%day%`, `%hour%`, `%minute%`, `%second%`
-- Model: `%model%`, `%model_full%`, `%unet%`, `%lora%`, `%vae%`
+- Model: `%model%`, `%model_full%`, `%unet%`, `%lora%`, `%loras%`, `%vae%`
 - Sampling: `%seed%`, `%steps%`, `%cfg%`, `%sampler%`, `%scheduler%`
-- Image: `%width%`, `%height%`, `%prompt%`, `%batch%`
+- Image: `%width%`, `%height%`, `%prompt%`, `%negative%`, `%batch%`
+- Custom: any valid name created in **Variable Overrides**, for example `%project%`
 
 Example for numbered images under a model folder:
 
@@ -64,6 +76,16 @@ Install `smart-save-image` from ComfyUI Manager, or clone this repository into `
 4. 在“保存结果预览”中确认最终目录与示例文件名。
 
 模板变量默认折叠，展开后点击变量即可插入当前规则输入框。
+
+### 变量覆盖
+
+模型、LoRA、VAE、采样参数、提示词和图片尺寸仍会自动读取。只有当前保存节点需要不同值时，才展开“变量覆盖”：
+
+1. 点击“添加变量覆盖”，选择种子、采样器、正向提示词等现有变量并填写新值。
+2. 选择“自定义”可创建任意命名变量，例如 `project`；点击该行的 `%project%` 即可插入目录或文件名规则。
+3. 每个智能保存节点都有自己独立且不限数量的配置；删除一项后，该变量立即恢复自动读取。
+
+模板新增 `%loras%`（全部 LoRA）和 `%negative%`（负向提示词），自定义变量使用 `%变量名%`。
 
 ### 保存行为
 

@@ -14,7 +14,8 @@
       "manual_model": {"name": "模型来源"},
       "embed_workflow": {"name": "嵌入工作流"},
       "counter_digits": {"name": "序号位数"},
-      "png_compression": {"name": "PNG 压缩"}
+      "png_compression": {"name": "PNG 压缩"},
+      "variable_overrides": {"name": "变量覆盖"}
     }
   }
 }

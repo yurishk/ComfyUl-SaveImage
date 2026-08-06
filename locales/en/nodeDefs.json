@@ -14,7 +14,8 @@
       "manual_model": {"name": "Model Source"},
       "embed_workflow": {"name": "Embed Workflow"},
       "counter_digits": {"name": "Counter Digits"},
-      "png_compression": {"name": "PNG Compression"}
+      "png_compression": {"name": "PNG Compression"},
+      "variable_overrides": {"name": "Variable Overrides"}
     }
   }
 }

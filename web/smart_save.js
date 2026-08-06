@@ -1,6 +1,12 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { buildReadOnlyPrompt } from "./read_only_prompt.mjs";
+import {
+  KNOWN_VARIABLE_KEYS,
+  createVariableItem,
+  parseVariableConfig,
+  serializeVariableConfig,
+} from "./variable_config.mjs";
 
 const NODE_NAME = "SmartSaveImage";
 const CSS_HREF = new URL("./smart_save.css", import.meta.url).href;
@@ -19,6 +25,7 @@ const MANAGED_WIDGETS = [
   "embed_workflow",
   "counter_digits",
   "png_compression",
+  "variable_overrides",
 ];
 
 // 占位符说明（分组展示，点击插入到当前聚焦的模板输入框）
@@ -40,6 +47,7 @@ function tokenGroups(tr) {
     { t: "%model_full%", d: tr("模型完整名", "Full model name") },
     { t: "%unet%", d: tr("UNet/扩散模型", "UNet or diffusion model") },
     { t: "%lora%", d: tr("首个 LoRA", "First LoRA") },
+    { t: "%loras%", d: tr("全部 LoRA", "All LoRAs") },
     { t: "%vae%", d: "VAE" },
   ]},
   { group: tr("采样", "Sampling"), items: [
@@ -48,8 +56,28 @@ function tokenGroups(tr) {
   ]},
   { group: tr("图片", "Image"), items: [
     { t: "%width%", d: tr("宽", "Width") }, { t: "%height%", d: tr("高", "Height") },
-    { t: "%prompt%", d: tr("正向提示词", "Positive prompt") }, { t: "%batch%", d: tr("批次序号（仅文件名）", "Batch index, filenames only") },
+    { t: "%prompt%", d: tr("正向提示词", "Positive prompt") },
+    { t: "%negative%", d: tr("负向提示词", "Negative prompt") },
+    { t: "%batch%", d: tr("批次序号（仅文件名）", "Batch index, filenames only") },
   ]},
+  ];
+}
+
+function variableDefinitions(tr) {
+  return [
+    ["unet", tr("UNet / 扩散模型", "UNet / Diffusion Model")],
+    ["lora", tr("首个 LoRA", "First LoRA")],
+    ["loras", tr("全部 LoRA", "All LoRAs")],
+    ["vae", "VAE"],
+    ["seed", tr("种子", "Seed")],
+    ["steps", tr("步数", "Steps")],
+    ["cfg", "CFG"],
+    ["sampler", tr("采样器", "Sampler")],
+    ["scheduler", tr("调度器", "Scheduler")],
+    ["width", tr("宽度", "Width")],
+    ["height", tr("高度", "Height")],
+    ["prompt", tr("正向提示词", "Positive Prompt")],
+    ["negative", tr("负向提示词", "Negative Prompt")],
   ];
 }
 
@@ -98,8 +126,11 @@ function hideWidget(node, name) {
 function buildPanel(node) {
   const tr = createTranslator();
   const tokens = tokenGroups(tr);
+  const variableDefs = variableDefinitions(tr);
+  const knownVariableKeys = new Set(KNOWN_VARIABLE_KEYS);
   let debounceTimer = null;
   let previewRequest = 0;
+  let variableItems = parseVariableConfig(widgetValue(node, "variable_overrides", ""));
 
   node.serialize_widgets = true;
   for (const name of MANAGED_WIDGETS) hideWidget(node, name);
@@ -186,6 +217,135 @@ function buildPanel(node) {
     field.dispatchEvent(new Event("input"));
   }
 
+  // ---- 当前保存节点独立的变量覆盖 ----
+  const overrides = el("details", "ssi-overrides");
+  const overrideSummary = el("summary", "ssi-overrides-summary");
+  const overrideTitle = el("span", null, tr("变量覆盖", "Variable Overrides"));
+  const overrideCount = el("span", "ssi-count", "0");
+  overrideSummary.append(overrideTitle, overrideCount);
+  const overrideHint = el(
+    "div",
+    "ssi-hint",
+    tr(
+      "未添加覆盖项或预设变量值为空时自动读取。设置只属于当前保存节点；自定义名称会生成同名模板变量。",
+      "No override, or a blank known value, means auto-detect. Settings belong only to this Save node; a custom name creates a matching token.",
+    ),
+  );
+  const overrideList = el("div", "ssi-override-list");
+  const addOverride = el("button", "ssi-add-override", tr("＋ 添加变量覆盖", "+ Add Override"));
+  addOverride.type = "button";
+  overrides.append(overrideSummary, overrideHint, overrideList, addOverride);
+
+  function nextCustomKey() {
+    const used = new Set(variableItems.map((item) => item.key));
+    if (!used.has("custom")) return "custom";
+    let index = 2;
+    while (used.has(`custom_${index}`)) index += 1;
+    return `custom_${index}`;
+  }
+
+  function persistVariableItems() {
+    setWidget(node, "variable_overrides", serializeVariableConfig(variableItems));
+    overrideCount.textContent = String(variableItems.length);
+    schedulePreview();
+  }
+
+  function renderVariableItems() {
+    overrideList.replaceChildren();
+    overrideCount.textContent = String(variableItems.length);
+    overrideCount.classList.toggle("ssi-count-active", variableItems.length > 0);
+
+    const keyCounts = variableItems.reduce((counts, item) => {
+      counts.set(item.key, (counts.get(item.key) || 0) + 1);
+      return counts;
+    }, new Map());
+
+    for (const item of variableItems) {
+      const row = el("div", "ssi-override-row");
+      if (keyCounts.get(item.key) > 1) {
+        row.classList.add("ssi-override-duplicate");
+        row.title = tr("同名变量重复，最后一项生效", "Duplicate variable: the last value wins");
+      }
+
+      const typeSelect = el("select", "ssi-select ssi-override-type");
+      for (const [key, label] of variableDefs) {
+        const option = el("option", null, label);
+        option.value = key;
+        typeSelect.append(option);
+      }
+      const customOption = el("option", null, tr("自定义…", "Custom..."));
+      customOption.value = "__custom__";
+      typeSelect.append(customOption);
+      typeSelect.value = knownVariableKeys.has(item.key) ? item.key : "__custom__";
+
+      const valueWrap = el("div", "ssi-override-value-wrap");
+      if (!knownVariableKeys.has(item.key)) {
+        const customKey = el("input", "ssi-input ssi-custom-key");
+        customKey.value = item.key;
+        customKey.placeholder = tr("变量名", "Token name");
+        customKey.title = tr("仅限英文字母、数字和下划线，必须以字母开头", "Letters, numbers, and underscores; must start with a letter");
+        customKey.onchange = () => {
+          const normalized = customKey.value.trim().toLowerCase();
+          if (!/^[a-z][a-z0-9_]*$/.test(normalized)) {
+            customKey.value = item.key;
+            customKey.classList.add("ssi-input-invalid");
+            return;
+          }
+          customKey.classList.remove("ssi-input-invalid");
+          item.key = normalized;
+          persistVariableItems();
+          renderVariableItems();
+        };
+        valueWrap.append(customKey);
+      }
+
+      const valueInput = el("input", "ssi-input ssi-override-value");
+      valueInput.value = item.value;
+      valueInput.placeholder = tr("自定义值", "Custom value");
+      valueInput.title = item.value;
+      valueInput.oninput = () => {
+        item.value = valueInput.value;
+        valueInput.title = item.value;
+        persistVariableItems();
+      };
+      valueWrap.append(valueInput);
+
+      const tokenButton = el("button", "ssi-variable-token", `%${item.key}%`);
+      tokenButton.type = "button";
+      tokenButton.title = tr("插入到当前规则", "Insert into the active rule");
+      tokenButton.onclick = () => insertToken(`%${item.key}%`);
+
+      const removeButton = el("button", "ssi-icon-btn", "×");
+      removeButton.type = "button";
+      removeButton.title = tr("删除变量覆盖", "Remove override");
+      removeButton.setAttribute("aria-label", removeButton.title);
+      removeButton.onclick = () => {
+        variableItems = variableItems.filter((candidate) => candidate.id !== item.id);
+        persistVariableItems();
+        renderVariableItems();
+      };
+
+      typeSelect.onchange = () => {
+        item.key = typeSelect.value === "__custom__" ? nextCustomKey() : typeSelect.value;
+        persistVariableItems();
+        renderVariableItems();
+      };
+
+      row.append(typeSelect, valueWrap, tokenButton, removeButton);
+      overrideList.append(row);
+    }
+    requestAnimationFrame(fitNodeToPanel);
+  }
+
+  addOverride.onclick = () => {
+    const used = new Set(variableItems.map((item) => item.key));
+    const available = KNOWN_VARIABLE_KEYS.find((key) => !used.has(key));
+    variableItems.push(createVariableItem(available || nextCustomKey()));
+    persistVariableItems();
+    renderVariableItems();
+    overrideList.scrollTop = overrideList.scrollHeight;
+  };
+
   // ---- 模型来源 ----
   const modelRow = el("div", "ssi-row");
   modelRow.append(el("label", "ssi-label", tr("模型来源", "Model Source")));
@@ -259,7 +419,7 @@ function buildPanel(node) {
   const statusLine = el("div", "ssi-status", "");
   previewBox.append(previewHead, pathLine, fileLine, ctxLine, statusLine);
 
-  root.append(rootRow, customRootWrap, folderRow, nameRow, previewBox, palette, modelRow, optGrid);
+  root.append(rootRow, customRootWrap, folderRow, nameRow, previewBox, palette, overrides, modelRow, optGrid);
 
   function syncFormat() {
     compressionWrap.style.display = fmtSelect.value === "png" ? "flex" : "none";
@@ -290,6 +450,8 @@ function buildPanel(node) {
     modeSelect.value = widgetValue(node, "save_mode", "save_and_preview");
     digitsInput.value = widgetValue(node, "counter_digits", 3);
     embedBox.checked = widgetValue(node, "embed_workflow", true) !== false;
+    variableItems = parseVariableConfig(widgetValue(node, "variable_overrides", ""));
+    renderVariableItems();
     syncFormat();
     syncRoot();
   }
@@ -308,6 +470,7 @@ function buildPanel(node) {
         filename_template: widgetValue(node, "filename_template", "image"),
         file_format: widgetValue(node, "file_format", "png"),
         manual_model: widgetValue(node, "manual_model", "auto"),
+        variable_overrides: widgetValue(node, "variable_overrides", ""),
         counter_digits: widgetValue(node, "counter_digits", 3),
         collision_mode: widgetValue(node, "collision_mode", "increment"),
         batch_size: 1,
@@ -330,15 +493,22 @@ function buildPanel(node) {
       const examples = (data.example_filenames || []).join(tr("  、  ", ", "));
       fileLine.textContent = tr("示例文件：", "Example file: ") + examples;
       const c = data.context || {};
+      const overridden = new Set(c.overridden || []);
       ctxLine.innerHTML = "";
       const chips = [
-        [tr("模型", "Model"), c.model], ["LoRA", c.lora], [tr("种子", "Seed"), c.seed],
-        [tr("采样器", "Sampler"), c.sampler], [tr("尺寸", "Size"), c.width && c.height ? `${c.width}x${c.height}` : ""],
+        [tr("模型", "Model"), c.model, "model"], ["LoRA", c.lora, "lora"], [tr("种子", "Seed"), c.seed, "seed"],
+        [tr("采样器", "Sampler"), c.sampler, "sampler"], [tr("尺寸", "Size"), c.width && c.height ? `${c.width}x${c.height}` : "", "width"],
       ];
-      for (const [k, v] of chips) {
+      for (const [k, v, key] of chips) {
         if (!v) continue;
         const tag = el("span", "ssi-ctx-tag");
+        if (overridden.has(key) || (key === "width" && overridden.has("height"))) tag.classList.add("ssi-ctx-overridden");
         tag.append(el("b", null, k + tr("：", ": ")), document.createTextNode(v));
+        ctxLine.append(tag);
+      }
+      for (const [key, value] of Object.entries(c.custom || {})) {
+        const tag = el("span", "ssi-ctx-tag ssi-ctx-overridden");
+        tag.append(el("b", null, `%${key}%` + tr("：", ": ")), document.createTextNode(value));
         ctxLine.append(tag);
       }
       if (data.exists) {
@@ -377,7 +547,7 @@ function buildPanel(node) {
   const widget = node.addDOMWidget("smart_save_panel", "smart-save", root, {
     serialize: false,
     getMinHeight() { return Math.max(360, panelContentHeight() + 8); },
-    getMaxHeight() { return 900; },
+    getMaxHeight() { return 1200; },
   });
   widget.serialize = false;
 
@@ -395,6 +565,7 @@ function buildPanel(node) {
   const panelObserver = new ResizeObserver(() => requestAnimationFrame(fitNodeToPanel));
   panelObserver.observe(root);
   palette.addEventListener("toggle", () => requestAnimationFrame(fitNodeToPanel));
+  overrides.addEventListener("toggle", () => requestAnimationFrame(fitNodeToPanel));
 
   const onRemoved = node.onRemoved;
   node.onRemoved = function () {

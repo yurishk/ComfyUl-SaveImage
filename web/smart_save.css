@@ -99,6 +99,132 @@
   border-radius: 6px;
 }
 
+/* 当前保存节点独立的变量覆盖 */
+.ssi-overrides {
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+}
+
+.ssi-overrides-summary {
+  cursor: pointer;
+  color: var(--descrip-text, #b8c0cc);
+  font-weight: 600;
+  user-select: none;
+}
+
+.ssi-overrides[open] .ssi-overrides-summary {
+  margin-bottom: 7px;
+}
+
+.ssi-count {
+  float: right;
+  min-width: 22px;
+  height: 18px;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--descrip-text, #8a93a2);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ssi-count-active {
+  background: rgba(91, 157, 255, 0.2);
+  color: #9fc3ff;
+}
+
+.ssi-override-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 7px;
+  max-height: 310px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.ssi-override-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) minmax(62px, auto) 28px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ssi-override-row .ssi-input,
+.ssi-override-row .ssi-select {
+  height: 28px;
+  padding: 4px 6px;
+}
+
+.ssi-override-value-wrap {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ssi-custom-key {
+  flex: 0 1 94px;
+}
+
+.ssi-override-value {
+  flex: 1 1 120px;
+}
+
+.ssi-variable-token,
+.ssi-icon-btn,
+.ssi-add-override {
+  height: 28px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  background: var(--comfy-input-bg, #222);
+  color: var(--descrip-text, #b8c0cc);
+  cursor: pointer;
+}
+
+.ssi-variable-token {
+  max-width: 100px;
+  padding: 3px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 10px;
+}
+
+.ssi-icon-btn {
+  width: 28px;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.ssi-add-override {
+  width: 100%;
+  margin-top: 7px;
+  color: #cdd6e0;
+}
+
+.ssi-variable-token:hover,
+.ssi-icon-btn:hover,
+.ssi-add-override:hover {
+  border-color: #5b9dff;
+  color: #fff;
+}
+
+.ssi-override-duplicate .ssi-override-type {
+  border-color: #f0a35b;
+}
+
+.ssi-input-invalid {
+  border-color: #e46565 !important;
+}
+
 .ssi-palette-summary {
   cursor: pointer;
   color: var(--descrip-text, #b8c0cc);
@@ -254,6 +380,11 @@
 .ssi-ctx-tag b {
   color: #9fc3ff;
   font-weight: 600;
+}
+
+.ssi-ctx-overridden {
+  outline: 1px solid rgba(91, 157, 255, 0.55);
+  background: rgba(91, 157, 255, 0.13);
 }
 
 .ssi-status {

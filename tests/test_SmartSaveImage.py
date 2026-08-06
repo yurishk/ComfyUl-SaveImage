@@ -1,5 +1,6 @@
 """SmartSaveImage 节点回归测试。"""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,13 @@ pytest.importorskip("folder_paths")
 
 from src.SmartSaveImage.nodes import NODE_CLASS_MAPPINGS, SmartSaveImage
 from src.SmartSaveImage.nodes.smart_save import (
+    EMPTY_VARIABLE_CONFIG,
+    apply_variable_overrides,
     build_subfolder,
     expand_template,
     extract_context,
+    parse_variable_config,
+    resolve_template_context,
 )
 from src.SmartSaveImage.server_routes import compute_preview
 
@@ -98,6 +103,83 @@ def test_preview_uses_next_available_filename(tmp_path):
 def test_batch_token_in_filename():
     ctx = extract_context({})
     assert expand_template("img_%batch%", ctx, 5) == "img_05"
+
+
+def test_variable_overrides_replace_auto_values_and_add_custom_tokens():
+    prompt = {
+        "1": {
+            "class_type": "KSampler",
+            "inputs": {"seed": 999, "steps": 30, "sampler_name": "euler"},
+        }
+    }
+    config = json.dumps({"items": [
+        {"id": "seed", "key": "seed", "value": "123"},
+        {"id": "project", "key": "project", "value": "client/A"},
+    ]})
+
+    ctx = resolve_template_context(prompt, variable_overrides=config)
+
+    assert ctx["seed"] == "123"
+    assert ctx["steps"] == "30"
+    assert ctx["custom"] == {"project": "client/A"}
+    assert expand_template("%project%_%seed%", ctx) == "client_A_123"
+
+
+def test_loras_override_keeps_first_lora_token_consistent():
+    ctx = apply_variable_overrides(
+        extract_context({}),
+        {"items": [{"key": "loras", "value": "face.safetensors, detail.safetensors"}]},
+    )
+
+    assert ctx["lora"] == "face.safetensors"
+    assert ctx["loras"] == ["face.safetensors", "detail.safetensors"]
+    assert expand_template("%lora%+%loras%", ctx) == "face.safetensors+face.safetensors+detail.safetensors"
+
+
+def test_variable_configuration_is_per_call_and_does_not_mutate_auto_context():
+    automatic = extract_context({"1": {"class_type": "KSampler", "inputs": {"seed": 7}}})
+    first = apply_variable_overrides(automatic, {"items": [{"key": "seed", "value": "11"}]})
+    second = apply_variable_overrides(automatic, {"items": [{"key": "seed", "value": "22"}]})
+
+    assert automatic["seed"] == "7"
+    assert first["seed"] == "11"
+    assert second["seed"] == "22"
+
+
+def test_malformed_variable_configuration_falls_back_to_automatic_values():
+    automatic = extract_context({"1": {"class_type": "KSampler", "inputs": {"seed": 42}}})
+
+    assert parse_variable_config("not-json") == []
+    assert apply_variable_overrides(automatic, "not-json")["seed"] == "42"
+    assert SmartSaveImage.INPUT_TYPES()["optional"]["variable_overrides"][1]["default"] == EMPTY_VARIABLE_CONFIG
+
+
+def test_blank_known_override_keeps_the_automatically_detected_value():
+    automatic = extract_context({"1": {"class_type": "KSampler", "inputs": {"seed": 42}}})
+    result = apply_variable_overrides(automatic, {"items": [{"key": "seed", "value": ""}]})
+
+    assert result["seed"] == "42"
+    assert result["overridden"] == []
+
+
+def test_preview_uses_the_same_override_context_as_saving(tmp_path):
+    config = json.dumps({"items": [
+        {"key": "seed", "value": "321"},
+        {"key": "project", "value": "example"},
+    ]})
+    preview = compute_preview({
+        "root_mode": "custom",
+        "custom_root": str(tmp_path),
+        "folder_template": "%project%",
+        "filename_template": "image_%seed%",
+        "file_format": "png",
+        "variable_overrides": config,
+    })
+
+    assert Path(preview["target"]).name == "example"
+    assert preview["example_filenames"] == ["image_321.png"]
+    assert preview["context"]["custom"] == {"project": "example"}
+    assert preview["context"]["overridden"] == ["seed", "project"]
 
 
 @pytest.mark.parametrize("file_format,pil_format", [

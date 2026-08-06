@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - 测试环境可能没有
 
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _DATE_TOKEN = re.compile(r"%date(?::([^%]+))?%", re.IGNORECASE)
+_CUSTOM_TOKEN_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
@@ -55,6 +56,32 @@ _LORA_KEYS = ("lora_name", "lora", "lora_name_1", "lora_1", "lora_0")
 _VAE_KEYS = ("vae_name", "vae")
 
 _SAMPLER_SEED_KEYS = ("seed", "noise_seed")
+
+VARIABLE_CONFIG_VERSION = 1
+EMPTY_VARIABLE_CONFIG = json.dumps(
+    {"version": VARIABLE_CONFIG_VERSION, "items": []},
+    ensure_ascii=False,
+    separators=(",", ":"),
+)
+VARIABLE_ALIASES = {
+    "unet": "unet",
+    "lora": "lora",
+    "loras": "loras",
+    "vae": "vae",
+    "seed": "seed",
+    "steps": "steps",
+    "cfg": "cfg",
+    "sampler": "sampler",
+    "scheduler": "scheduler",
+    "width": "width",
+    "height": "height",
+    "prompt": "positive",
+    "negative": "negative",
+}
+_RESERVED_CUSTOM_KEYS = {
+    "date", "year", "month", "day", "hour", "minute", "second", "batch",
+    "model", "model_full", *VARIABLE_ALIASES,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +219,78 @@ def extract_context(prompt: Any, width: int = 0, height: int = 0) -> dict[str, A
     return ctx
 
 
+def parse_variable_config(value: Any) -> list[dict[str, str]]:
+    """Parse per-node overrides without allowing malformed workflow data to fail a save."""
+    source = value
+    if isinstance(value, str):
+        try:
+            source = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if isinstance(source, dict):
+        raw_items = source.get("items", [])
+    elif isinstance(source, list):
+        raw_items = source
+    else:
+        return []
+
+    items: list[dict[str, str]] = []
+    for raw in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key", "")).strip().lower()
+        if not _CUSTOM_TOKEN_KEY.fullmatch(key):
+            continue
+        items.append({"key": key, "value": str(raw.get("value", ""))})
+    return items
+
+
+def apply_variable_overrides(ctx: dict[str, Any], config: Any) -> dict[str, Any]:
+    """Return a copied context with known-field and custom-token overrides applied."""
+    result = dict(ctx)
+    result["loras"] = list(ctx.get("loras") or [])
+    result["custom"] = dict(ctx.get("custom") or {})
+    overridden: list[str] = []
+
+    for item in parse_variable_config(config):
+        key = item["key"]
+        value = item["value"]
+        target = VARIABLE_ALIASES.get(key)
+        if target:
+            # An unfinished/cleared known override falls back to workflow detection.
+            if value == "":
+                continue
+            if target == "loras":
+                result[target] = [part.strip() for part in re.split(r"[,;\n]+", value) if part.strip()]
+                result["lora"] = result[target][0] if result[target] else ""
+            else:
+                result[target] = value
+            if key == "lora":
+                result["loras"] = [value] if value else []
+            overridden.append(key)
+        elif key not in _RESERVED_CUSTOM_KEYS:
+            result["custom"][key] = value
+            overridden.append(key)
+
+    result["overridden"] = list(dict.fromkeys(overridden))
+    return result
+
+
+def resolve_template_context(
+    prompt: Any,
+    width: int = 0,
+    height: int = 0,
+    manual_model: str = "auto",
+    variable_overrides: Any = EMPTY_VARIABLE_CONFIG,
+) -> dict[str, Any]:
+    """Build the final per-save-node context used by both preview and execution."""
+    ctx = extract_context(prompt, width, height)
+    if manual_model and manual_model != "auto":
+        ctx["model_full"] = manual_model
+        ctx["model"] = Path(manual_model).stem
+    return apply_variable_overrides(ctx, variable_overrides)
+
+
 # --------------------------------------------------------------------------- #
 # 模板引擎
 # --------------------------------------------------------------------------- #
@@ -237,8 +336,11 @@ def expand_template(template: str, ctx: dict[str, Any], batch_index: int = 0,
     model_full = sanitize_segment(ctx.get("model_full") or "unknown_model", "unknown_model", 140)
     unet = sanitize_segment(ctx.get("unet") or "", "", 100)
     lora = sanitize_segment(ctx.get("lora") or "no_lora", "no_lora", 100)
+    loras = sanitize_segment("+".join(ctx.get("loras") or []), "no_lora", 160)
     vae = sanitize_segment(ctx.get("vae") or "", "", 100)
     prompt_text = sanitize_segment(positive or "untitled", "untitled", prompt_max_len)
+    negative = re.sub(r"\s+", " ", ctx.get("negative", "")).strip()[:prompt_max_len]
+    negative_text = sanitize_segment(negative or "", "", prompt_max_len)
 
     tokens = {
         "%year%": now.strftime("%Y"),
@@ -251,6 +353,7 @@ def expand_template(template: str, ctx: dict[str, Any], batch_index: int = 0,
         "%model_full%": model_full,
         "%unet%": unet,
         "%lora%": lora,
+        "%loras%": loras,
         "%vae%": vae,
         "%seed%": str(ctx.get("seed") or "0"),
         "%steps%": str(ctx.get("steps") or ""),
@@ -260,10 +363,17 @@ def expand_template(template: str, ctx: dict[str, Any], batch_index: int = 0,
         "%width%": str(ctx.get("width") or "0"),
         "%height%": str(ctx.get("height") or "0"),
         "%prompt%": prompt_text,
+        "%negative%": negative_text,
         "%batch%": f"{batch_index:02d}",
     }
     for token, repl in tokens.items():
         value = value.replace(token, str(repl))
+    for key, custom_value in (ctx.get("custom") or {}).items():
+        if _CUSTOM_TOKEN_KEY.fullmatch(str(key)) and key not in _RESERVED_CUSTOM_KEYS:
+            value = value.replace(
+                f"%{key}%",
+                sanitize_segment(str(custom_value), "", 160),
+            )
     return value
 
 
@@ -404,6 +514,11 @@ class SmartSaveImage:
                 "png_compression": ("INT", {
                     "default": 4, "min": 0, "max": 9, "step": 1,
                     "tooltip": "PNG 无损压缩等级；4 与 ComfyUI 自带保存节点一致。",
+                }),
+                "variable_overrides": ("STRING", {
+                    "default": EMPTY_VARIABLE_CONFIG,
+                    "multiline": True,
+                    "tooltip": "当前保存节点独立使用的模板变量覆盖与自定义变量。",
                 }),
             },
             "hidden": {
@@ -561,7 +676,7 @@ class SmartSaveImage:
     def save_images(self, images, root_mode, custom_root, folder_template, filename_template,
                     file_format, quality, collision_mode, save_mode,
                     manual_model="auto", embed_workflow=True, counter_digits=3, png_compression=4,
-                    prompt=None, extra_pnginfo=None):
+                    variable_overrides=EMPTY_VARIABLE_CONFIG, prompt=None, extra_pnginfo=None):
 
         if save_mode == self.MODE_PREVIEW_ONLY:
             return comfy_nodes.PreviewImage().save_images(
@@ -570,10 +685,13 @@ class SmartSaveImage:
 
         height = int(images[0].shape[0]) if len(images) else 0
         width = int(images[0].shape[1]) if len(images) else 0
-        ctx = extract_context(prompt, width, height)
-        if manual_model and manual_model != "auto":
-            ctx["model_full"] = manual_model
-            ctx["model"] = Path(manual_model).stem
+        ctx = resolve_template_context(
+            prompt,
+            width,
+            height,
+            manual_model,
+            variable_overrides,
+        )
 
         root, target_folder = resolve_target(root_mode, custom_root, folder_template, ctx)
         os.makedirs(target_folder, exist_ok=True)

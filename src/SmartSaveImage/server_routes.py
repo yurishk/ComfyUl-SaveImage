@@ -16,7 +16,7 @@ from .nodes.smart_save import (
     SmartSaveImage,
     build_filename_base,
     build_subfolder,
-    extract_context,
+    resolve_template_context,
     resolve_root,
 )
 
@@ -41,15 +41,16 @@ def compute_preview(data: dict) -> dict:
     filename_template = data.get("filename_template", "image")
     file_format = data.get("file_format", "png")
     manual_model = data.get("manual_model", "auto")
+    variable_overrides = data.get("variable_overrides", "")
     counter_digits = min(max(int(data.get("counter_digits", 3) or 0), 0), 8)
     batch_size = min(max(int(data.get("batch_size", 1) or 1), 1), 1000)
     collision_mode = data.get("collision_mode", SmartSaveImage.COLLISION_INCREMENT)
 
-    ctx = extract_context(prompt)
-    if manual_model and manual_model != "auto":
-        from pathlib import Path
-        ctx["model_full"] = manual_model
-        ctx["model"] = Path(manual_model).stem
+    ctx = resolve_template_context(
+        prompt,
+        manual_model=manual_model,
+        variable_overrides=variable_overrides,
+    )
 
     root = resolve_root(root_mode, custom_root)
     subfolder = build_subfolder(folder_template, ctx)
@@ -91,6 +92,9 @@ def compute_preview(data: dict) -> dict:
             "width": ctx.get("width") or "",
             "height": ctx.get("height") or "",
             "positive": (ctx.get("positive") or "")[:120],
+            "negative": (ctx.get("negative") or "")[:120],
+            "custom": ctx.get("custom", {}),
+            "overridden": ctx.get("overridden", []),
         },
     }
 
